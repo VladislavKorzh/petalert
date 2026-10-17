@@ -1,4 +1,4 @@
-"""Команди поза діалогом: /start, /help, /list, /cancel і кнопки підписок."""
+"""Commands outside the dialog: /start, /help, /list, /cancel and subscription buttons."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ async def on_sub_action(
         else:
             await query.answer("Subscription not found", show_alert=True)
         return
-    # Resume = знову baseline: що з'явилось за час паузи, не надсилаємо.
+    # Resume = baseline again: whatever appeared while paused is not sent.
     status = "paused" if callback_data.action == "pause" else "baselining"
     if not store.set_status(sub_id, chat_id, status):
         await query.answer("Subscription not found", show_alert=True)
@@ -113,8 +113,8 @@ async def unknown_text(message: Message, state: FSMContext) -> None:
 
 
 def build_routers() -> tuple[Router, Router]:
-    """(команди й кнопки підписок, catch-all). Catch-all іде окремим роутером,
-    бо підключається останнім — після діалогу."""
+    """(commands and subscription buttons, catch-all). The catch-all is a separate
+    router because it must be included last — after the dialog."""
     router = Router(name="manage")
     router.message.register(cmd_start, CommandStart())
     router.message.register(cmd_help, Command("help"))

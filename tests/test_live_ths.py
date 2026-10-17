@@ -1,4 +1,4 @@
-"""Живий THS. Лише з PETALERT_LIVE=1 — ловить дрейф API раніше, ніж користувачі.
+"""Live THS. Only with PETALERT_LIVE=1 — catches API drift before users do.
 
     PETALERT_LIVE=1 uv run pytest tests/test_live_ths.py
 """
@@ -46,7 +46,7 @@ def test_country_facet_works():
 
 def test_site_api_version_matches_the_default():
     version = run(lambda ths: ths._site_version())
-    assert version == DEFAULT_THS_API_VERSION, f"THS тепер {version}: онови THS_API_VERSION"
+    assert version == DEFAULT_THS_API_VERSION, f"THS is now on {version}: update THS_API_VERSION"
 
 
 def test_short_listing_url_redirects():

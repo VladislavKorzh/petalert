@@ -25,7 +25,7 @@ SLOTS = [Slot("s", date(2030, 1, 1), date(2030, 1, 10), True)]
 class Session(BaseSession):
     def __init__(self, errors):
         super().__init__()
-        self.errors = errors  # {тип методу: [винятки по черзі]}
+        self.errors = errors  # {method type: [exceptions in order]}
         self.sent: list = []
 
     async def close(self):

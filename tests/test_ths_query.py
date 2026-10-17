@@ -1,6 +1,6 @@
-"""Форма query для THS. Кожне поле тут перевірене живим запитом — і кожна
-помилка мовчазна: зайвий чи неправильний ключ API не відхиляє, а просто
-повертає не ті оголошення (або нуль)."""
+"""The THS query shape. Every field here was verified with a live request — and
+every mistake is silent: the API doesn't reject an extra or wrong key, it just
+returns the wrong listings (or none)."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def test_continent_only_by_default():
 
 def test_country_uses_slug_never_country_code():
     f = build_query(Filter(continent="europe", country="portugal"), TODAY)["filters"]
-    # countryCode API мовчки ігнорує — фільтр «Португалія» віддав би весь світ.
+    # The API silently ignores countryCode — a "Portugal" filter would return the whole world.
     assert f["geoHierarchy"] == {"countrySlug": "portugal"}
 
 
@@ -52,7 +52,7 @@ def test_only_given_duration_bounds_are_sent():
 def test_pet_types_are_exactly_the_site_strings():
     f = build_query(Filter(continent="europe", pets=("small pet", "cat")), TODAY)["filters"]
     assert f["pets"] == [{"type": "cat"}, {"type": "small pet"}]
-    # Невідомий тип = 0 результатів без жодної помилки; список закритий.
+    # An unknown type = 0 results with no error at all; the list is closed.
     assert PETS == (
         "dog", "cat", "horse", "bird", "fish", "reptile", "poultry", "farm animal", "small pet",
     )
@@ -64,7 +64,7 @@ def test_page_and_facets():
 
 
 def test_exclusions_are_not_sent_to_the_api():
-    # THS виключень не вміє: питаємо весь континент, відсікає локальний фільтр.
+    # THS can't exclude: query the whole continent, the local filter drops the rest.
     f = build_query(Filter("europe", exclude_countries=("united-kingdom",)), TODAY)["filters"]
     assert f["geoHierarchy"] == {"continentSlug": "europe"}
     assert "united-kingdom" not in str(f)

@@ -1,16 +1,16 @@
-"""Діалог /new: джерело → континент → країна → дати → тривалість → тварини → Save.
+"""The /new dialog: source → continent → country → dates → length → pets → Save.
 
-Крок країни має два режими: одна країна (або будь-яка) чи «увесь континент,
-крім позначених» — той самий список із пагінацією, але кнопки перемикають
-виключення, а «Done» веде далі.
+The country step has two modes: a single country (or any), or "the whole
+continent except the ones marked" — the same paginated list, but the buttons
+toggle exclusions and "Done" moves on.
 
-Одне повідомлення бота редагується від кроку до кроку; нове з'являється лише
-після текстового вводу (дати, тривалість). Стан — у FSM (MemoryStorage):
-рестарт посеред діалогу його губить, і це прийнятно — /new займає хвилину.
+One bot message is edited from step to step; a new one only appears after
+text input (dates, length). State lives in the FSM (MemoryStorage): a restart
+mid-dialog loses it, which is acceptable — /new takes a minute.
 
-Країну в кнопці передаємо індексом у списку з FSM, а не slug: callback data
-обмежена 64 байтами, а slug на кшталт `bonaire-saint-eustatius-and-saba` разом
-із префіксом підходить до межі впритул.
+A country button carries its index into the list stored in the FSM, not the
+slug: callback data is limited to 64 bytes, and a slug like
+`bonaire-saint-eustatius-and-saba` plus the prefix comes right up to the limit.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class Pick(CallbackData, prefix="n"):
     value: str = ""
 
 
-# --- розбір текстового вводу (чисті функції) ---------------------------------
+# --- parsing text input (pure functions) ------------------------------------
 
 _DATE_RE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}[./]\d{4}")
 
@@ -74,10 +74,11 @@ def _parse_date(token: str) -> date:
 
 
 def parse_date_range(text: str, today: date) -> tuple[date, date]:
-    """`2026-11-01 2027-01-31` або `01.11.2026 - 31.01.2027`.
+    """`2026-11-01 2027-01-31` or `01.11.2026 - 31.01.2027`.
 
-    ValueError несе текст для користувача. Минулий початок підтягується до
-    сьогодні — сайт так само не показує вже розпочаті сити.
+    The ValueError message is meant for the user. A start date in the past is
+    clamped to today — the site doesn't show sits that have already started
+    either.
     """
     tokens = _DATE_RE.findall(text)
     if len(tokens) != 2:
@@ -99,7 +100,7 @@ _DURATION_RE = re.compile(r"^\s*(\d{1,3})\s*(?:\+|(?:-|–|—|to)\s*(\d{1,3}))?
 
 
 def parse_duration(text: str) -> tuple[int, int | None]:
-    """`7` / `7+` — від 7 днів; `7-21` — від 7 до 21."""
+    """`7` / `7+` — at least 7 days; `7-21` — from 7 to 21."""
     match = _DURATION_RE.match(text)
     if not match:
         raise ValueError("Send a number of days like 7, or a range like 7-21.")
@@ -110,7 +111,7 @@ def parse_duration(text: str) -> tuple[int, int | None]:
     return low, high
 
 
-# --- клавіатури --------------------------------------------------------------
+# --- keyboards --------------------------------------------------------------
 
 
 def _cancel(kb: InlineKeyboardBuilder) -> None:
@@ -138,7 +139,7 @@ def continents_keyboard() -> InlineKeyboardMarkup:
 def countries_keyboard(
     countries: list[list], page: int, excluded: list[str] | None = None
 ) -> InlineKeyboardMarkup:
-    """Вибір однієї країни; з `excluded` — перемикання виключень."""
+    """Pick a single country; with `excluded`, toggle exclusions instead."""
     excluding = excluded is not None
     kb = InlineKeyboardBuilder()
     rows: list[int] = []
@@ -211,7 +212,7 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-# --- кроки -------------------------------------------------------------------
+# --- steps ------------------------------------------------------------------
 
 
 def _filter(data: dict) -> Filter:
@@ -228,7 +229,7 @@ def _filter(data: dict) -> Filter:
 
 
 def _country_at(data: dict, value: str) -> str | None:
-    """Slug за індексом із кнопки; None — якщо індекс не з цього списку."""
+    """Slug for the index from a button; None if the index isn't in this list."""
     countries = data.get("countries") or []
     if not value.isdigit() or int(value) >= len(countries):
         return None
@@ -319,7 +320,7 @@ async def ask_confirm(target: Message, state: FSMContext, sources, *, edit: bool
 async def cmd_new(message: Message, state: FSMContext, sources) -> None:
     await state.clear()
     if len(sources) == 1:
-        # Один сайт — питати нема про що; крок з'явиться з другим джерелом.
+        # Only one site — nothing to ask; the step appears once there is a second source.
         await state.update_data(source=next(iter(sources)))
         await ask_continent(message, state, edit=False)
         return
@@ -351,7 +352,7 @@ async def on_continent(query: CallbackQuery, callback_data: Pick, state: FSMCont
     try:
         countries = await source.countries(callback_data.value)
     except Exception:
-        log.exception("countries(%s) упав", callback_data.value)
+        log.exception("countries(%s) failed", callback_data.value)
         await state.clear()
         await query.message.edit_text("⚠️ Couldn't load countries right now. Try /new again in a few minutes.")
         return
@@ -483,7 +484,7 @@ async def on_save(query: CallbackQuery, state: FSMContext, store: Store, worker:
 
 
 def build_router() -> Router:
-    """Свіжий роутер на кожен Dispatcher: aiogram дозволяє приєднати роутер лише раз."""
+    """A fresh router per Dispatcher: aiogram only lets a router be attached once."""
     router = Router(name="dialog")
     router.message.register(cmd_new, Command("new"))
     router.callback_query.register(on_cancel, Pick.filter(F.step == "cancel"))

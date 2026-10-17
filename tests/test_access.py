@@ -27,7 +27,7 @@ class Gate(AccessGate):
 
 
 def run(gate: Gate, text: str, user_id: int, chat_type: str = "private") -> bool:
-    """Прогнати апдейт через гейт; True — якщо дійшов до хендлера."""
+    """Run an update through the gate; True if it reached the handler."""
     user = User(id=user_id, is_bot=False, first_name="u")
     chat = Chat(id=user_id, type=chat_type)
     update = Update(
@@ -64,7 +64,7 @@ def test_strangers_need_a_code_and_codes_are_single_use(store):
     assert gate.replies[-1] == WELCOME
     assert run(gate, "/new", 5)
 
-    assert not run(gate, format_code(code), 6)  # той самий код іншим
+    assert not run(gate, format_code(code), 6)  # the same code by someone else
     assert gate.replies[-1] == BAD_CODE
     assert not run(gate, "/new", 6)
 

@@ -10,7 +10,7 @@ from petalert.config import Settings, env_values, read_dotenv
 
 def test_dotenv_is_read_without_touching_os_environ(tmp_path, monkeypatch):
     env = tmp_path / ".env"
-    env.write_text("# коментар\nPETALERT_X=from-file\nPETALERT_Y='quoted'  # пояснення\n\n")
+    env.write_text("# comment\nPETALERT_X=from-file\nPETALERT_Y='quoted'  # explanation\n\n")
     monkeypatch.delenv("PETALERT_X", raising=False)
 
     assert read_dotenv(env) == {"PETALERT_X": "from-file", "PETALERT_Y": "quoted"}

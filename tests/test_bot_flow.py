@@ -1,7 +1,7 @@
-"""Діалог і керування підписками через справжній Dispatcher.
+"""The dialog and subscription management through a real Dispatcher.
 
-Telegram підмінено сесією, що записує виклики Bot API, тож перевіряється
-вся проводка: гейт доступу, порядок роутерів, FSM, callback data.
+Telegram is replaced by a session that records Bot API calls, so the whole
+wiring is exercised: access gate, router order, FSM, callback data.
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ def test_all_except_dialog(h):
 def test_commands_win_over_dialog_text_steps(h):
     h.text("/new")
     h.press(Pick(step="cont", value="europe"))
-    h.press(Pick(step="ctry", value="*"))  # тепер діалог чекає дати текстом
+    h.press(Pick(step="ctry", value="*"))  # now the dialog expects dates as text
     assert texts(h.text("/list")) == ["📭 No subscriptions yet. Create one with /new."]
 
 

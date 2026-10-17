@@ -11,7 +11,7 @@ URL = "https://example.com/api"
 
 
 def make_http(statuses: list[int | Exception], *, proxy_url=None, mode="fallback"):
-    """Http із мокнутим транспортом: віддає статуси по черзі, пише, чи йшов через проксі."""
+    """Http with a mocked transport: returns statuses in order, records whether the proxy was used."""
     calls: list[bool] = []
     sleeps: list[float] = []
     queue = list(statuses)

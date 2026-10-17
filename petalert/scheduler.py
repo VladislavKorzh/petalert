@@ -1,21 +1,22 @@
-"""Воркер: раз на ~30 хв опитати джерела й розіслати нові проміжки дат.
+"""Worker: every ~30 minutes, poll the sources and send out new date slots.
 
-Ключові рішення:
+Key decisions:
 
-* **Групування.** Однакові (source, filter) у різних підписках — один HTTP-запит.
-* **Сторінка 1 чи повний обхід.** Зазвичай вистачає 100 найновіших (по світу
-  THS публікує ~50 оголошень на годину). Повний обхід — коли в групі є нова
-  підписка (baseline), раз на добу і після простою понад 2 год. Watermark по
-  `published` свідомо не використовується: це naive London time, і на DST він
-  ламається.
-* **Baseline.** Нова (чи відновлена після паузи) підписка спершу мовчки
-  позначає все, що підходить зараз, і лише потім стає `active`. Інакше перший
-  тік — це сотні алертів про старі оголошення. THS віддає лише 1000 найновіших
-  результатів, тож для широкого фільтра baseline покриває саме їх; старіше
-  оголошення дасть алерт, лише коли його перепублікують і воно підніметься
-  нагору стрічки, — а це й так подія, про яку варто знати.
-* **Позначати після відправки.** Невдала відправка не губиться: наступний тік
-  знайде той самий проміжок знову.
+* **Grouping.** Identical (source, filter) pairs across subscriptions share one
+  HTTP request.
+* **Page 1 vs full crawl.** The 100 newest listings are usually enough (THS
+  publishes ~50 listings an hour worldwide). A full crawl happens when a group
+  has a new subscription (baseline), once a day, and after more than 2 hours of
+  downtime. A watermark on `published` is deliberately not used: it is naive
+  London time and breaks on DST.
+* **Baseline.** A new (or resumed) subscription first silently marks everything
+  that matches right now, and only then becomes `active`. Otherwise the first
+  tick would be hundreds of alerts about old listings. THS only returns the
+  1000 newest results, so for a broad filter the baseline covers exactly those;
+  an older listing triggers an alert only once it is re-published and moves to
+  the top of the feed, which is worth knowing about anyway.
+* **Mark after sending.** A failed send is not lost: the next tick finds the
+  same slot again.
 """
 
 from __future__ import annotations
@@ -37,19 +38,19 @@ log = logging.getLogger(__name__)
 FULL_EVERY = timedelta(hours=24)
 CATCHUP_AFTER = timedelta(hours=2)
 PRUNE_EVERY = timedelta(hours=24)
-MAX_ALERTS_PER_CHAT = 10  # фото-алертів на чат за тік; решта — одним дайджестом
-MAX_DIGEST = 30  # рядків у дайджесті; те, що не влізло, піде наступним тіком
-FAIL_STREAK_ALERT = 3  # ~1.5 год поспіль без відповіді джерела — кажемо адміну
+MAX_ALERTS_PER_CHAT = 10  # photo alerts per chat per tick; the rest go into one digest
+MAX_DIGEST = 30  # digest entries; whatever doesn't fit goes out next tick
+FAIL_STREAK_ALERT = 3  # ~1.5 hours of a source failing in a row — tell the admin
 
 
 class ChatGone(Exception):
-    """Користувач заблокував бота або чат видалено — слати більше нікуди."""
+    """The user blocked the bot or the chat is gone — nowhere left to send."""
 
 
 class Outbox(Protocol):
     async def alert(self, chat_id: int, listing: Listing, slots: list[Slot], sub_ids: list[int]) -> None: ...
     async def digest(self, chat_id: int, items: list[tuple[Listing, list[Slot]]]) -> int:
-        """Повертає, скільки перших пунктів реально влізло в повідомлення."""
+        """Returns how many of the first items actually fit into the message."""
         ...
     async def text(self, chat_id: int, text: str) -> None: ...
 
@@ -59,7 +60,7 @@ Admin = Callable[[str], Awaitable[None]]
 
 @dataclass
 class _Pending:
-    """Одне оголошення для одного чату: нові проміжки з усіх його підписок."""
+    """One listing for one chat: new slots from all of that chat's subscriptions."""
 
     listing: Listing
     slots: dict[str, Slot] = field(default_factory=dict)
@@ -82,7 +83,7 @@ class TickStats:
     fresh: int = 0
     sent: int = 0
     failed: int = 0
-    full_crawl_new: int = 0  # нове, знайдене лише повним обходом (див. ризики в README)
+    full_crawl_new: int = 0  # new slots found by a full crawl (see risks in README)
 
 
 class Worker:
@@ -108,7 +109,7 @@ class Worker:
         self._last_prune: datetime | None = None
 
     def wake(self) -> None:
-        """Нова підписка чи resume — baseline одразу, а не через пів години."""
+        """New subscription or resume — baseline right away, not in half an hour."""
         self._wake.set()
 
     async def run(self) -> None:
@@ -121,8 +122,8 @@ class Worker:
                     await self.tick()
                     self._next_poll = self.clock() + self.interval * random.uniform(0.9, 1.1)
                 elif woken:
-                    # Лише за сигналом, а не «поки є baselining»: якщо джерело
-                    # лежить, це був би гарячий цикл запитів.
+                    # Only on a signal, not "while anything is baselining": if the
+                    # source is down, that would be a hot request loop.
                     await self.tick(only_baselining=True)
                 if self._last_prune is None or now - self._last_prune >= PRUNE_EVERY:
                     delivered, states = self.store.prune(now.date())
@@ -131,7 +132,7 @@ class Worker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.exception("тік упав")
+                log.exception("tick crashed")
                 await self._admin(f"Worker tick crashed: {exc!r}")
                 if self._next_poll is None or self._next_poll <= self.clock():
                     self._next_poll = self.clock() + self.interval
@@ -146,7 +147,7 @@ class Worker:
         try:
             await self.admin(text)
         except Exception:
-            log.exception("не вдалося написати адміну: %s", text)
+            log.exception("failed to message the admin: %s", text)
 
     def _needs_full(self, subs: list[Subscription], now: datetime) -> bool:
         if any(s.status == "baselining" for s in subs):
@@ -175,7 +176,7 @@ class Worker:
         for (source_key, filter_json), subs in groups.items():
             source = self.sources.get(source_key)
             if source is None:
-                log.error("невідоме джерело %r у підписках %s", source_key, [s.id for s in subs])
+                log.error("unknown source %r in subscriptions %s", source_key, [s.id for s in subs])
                 continue
             flt = Filter.from_json(filter_json)
             full = self._needs_full(subs, now)
@@ -196,14 +197,14 @@ class Worker:
             dropped = 0
             for listing in listings:
                 if listing.country in flt.exclude_countries:
-                    continue  # очікувано: виключення API не передаються
+                    continue  # expected: exclusions are not sent to the API
                 slots = matching_slots(listing, flt, today) if listing_matches(listing, flt) else []
                 dropped += not slots
                 matches.extend((listing, slot) for slot in slots)
             if dropped:
-                # API мав би повернути лише те, що підходить; масові розбіжності —
-                # ознака, що він почав ігнорувати якийсь фільтр.
-                log.warning("%s %s: локальний фільтр відкинув %d з %d", source_key, filter_json, dropped, len(listings))
+                # The API should only return matches; mass disagreement is a sign
+                # it has started ignoring one of the filters.
+                log.warning("%s %s: local filter dropped %d of %d", source_key, filter_json, dropped, len(listings))
 
             for sub in subs:
                 known = self.store.delivered_keys(sub.id)
@@ -240,9 +241,9 @@ class Worker:
             await self.outbox.text(chat_id, text)
         except ChatGone:
             self.store.pause_chat(chat_id)
-            log.info("чат %s недоступний — підписки на паузі", chat_id)
+            log.info("chat %s is gone — subscriptions paused", chat_id)
         except Exception:
-            log.exception("не вдалося написати в чат %s", chat_id)
+            log.exception("failed to message chat %s", chat_id)
 
     async def _deliver(self, chat_id: int, items: list[_Pending]) -> int:
         sent = 0
@@ -253,7 +254,7 @@ class Worker:
                 except ChatGone:
                     raise
                 except Exception:
-                    log.exception("алерт %s у чат %s не пішов — повториться наступним тіком", item.listing.id, chat_id)
+                    log.exception("alert %s to chat %s failed — will retry next tick", item.listing.id, chat_id)
                     continue
                 self._mark(item)
                 sent += 1
@@ -264,14 +265,14 @@ class Worker:
                 except ChatGone:
                     raise
                 except Exception:
-                    log.exception("дайджест у чат %s не пішов", chat_id)
+                    log.exception("digest to chat %s failed", chat_id)
                 else:
                     for item in rest[:included]:
                         self._mark(item)
                     sent += included
         except ChatGone:
             self.store.pause_chat(chat_id)
-            log.info("чат %s недоступний — підписки на паузі", chat_id)
+            log.info("chat %s is gone — subscriptions paused", chat_id)
         return sent
 
     def _mark(self, item: _Pending) -> None:

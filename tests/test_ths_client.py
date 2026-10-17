@@ -1,5 +1,5 @@
-"""TrustedHousesitters поверх мокнутого HTTP: заголовки, 406-самолікування,
-пагінація, помилки. Живий THS тут не смикається — для цього test_live_ths.py."""
+"""TrustedHousesitters over mocked HTTP: headers, 406 self-healing, paging,
+errors. The live THS is never hit here — that's what test_live_ths.py is for."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ PAGE_HTML = (FIXTURES / "ths_page_snippet.html").read_text()
 
 
 def page_of(n: int, total: int, start: int = 0) -> dict:
-    """n різних оголошень на основі першого з фікстури."""
+    """n distinct listings based on one from the fixture."""
     base = SEARCH["results"][1]
     return {
         "results": [dict(base, id=str(start + i)) for i in range(n)],
@@ -128,12 +128,12 @@ def test_paging_until_total_and_dedup_across_pages():
     fake = Fake(lambda r: httpx.Response(200, json=pages[json.loads(r.url.params["query"])["page"]]))
     listings = fake.run(lambda ths: ths.search(Filter("europe"), max_pages=None))
     assert [q["page"] for q in fake.queries()] == [1, 2, 3]
-    # Сторінка 2 зсунулась на 5 оголошень назад — дублікати відкинуті.
+    # Page 2 shifted back by 5 listings — duplicates are dropped.
     assert len(listings) == 225
 
 
 def test_full_crawl_stops_at_the_api_result_limit():
-    # THS: сторінка 11 по 100 → 400 «limited to the first 1000 results».
+    # THS: page 11 of 100 → 400 "limited to the first 1000 results".
     def handler(r):
         page = json.loads(r.url.params["query"])["page"]
         if page > 10:

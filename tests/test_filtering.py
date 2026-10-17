@@ -55,7 +55,7 @@ def test_geo_and_pets_are_checked_locally():
     assert listing_matches(lst, Filter("europe"))
     assert not listing_matches(lst, Filter("asia"))
     assert not listing_matches(lst, Filter("europe", country="spain"))
-    # OR: достатньо однієї тварини зі списку.
+    # OR: one pet from the list is enough.
     assert listing_matches(lst, Filter("europe", pets=("cat", "dog")))
     assert not listing_matches(lst, Filter("europe", pets=("cat",)))
 
@@ -74,7 +74,7 @@ def test_excluded_countries_are_dropped():
 
 
 def test_exclusions_keep_old_filter_json_stable():
-    # Підписки, збережені до появи виключень, мають той самий ключ групи.
+    # Subscriptions saved before exclusions existed keep the same group key.
     assert "exclude_countries" not in Filter("europe").to_json()
     flt = Filter("europe", exclude_countries=("ireland", "united-kingdom"))
     assert Filter.from_json(flt.to_json()) == flt

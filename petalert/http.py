@@ -1,12 +1,13 @@
-"""HTTP до сайтів-джерел: ретраї, backoff, проксі як запасний шлях, ввічливість.
+"""HTTP to source sites: retries, backoff, proxy as a fallback, politeness.
 
-Проксі за замовчуванням — лише запасний шлях: THS віддає API напряму, і кожен
-запит через резидентний пул коштує трафік. Тому перша спроба йде напряму, а
-повторні після 403/429/5xx — через проксі, якщо він заданий (`fallback`).
-`always` — для випадку, коли прямий IP дроплета вже заблокували.
+By default the proxy is only a fallback: THS serves the API directly, and every
+request through a residential pool costs traffic. So the first attempt goes
+direct, and retries after 403/429/5xx go through the proxy if one is set
+(`fallback`). `always` is for when the server's own IP is already blocked
+(THS blocks datacenter ranges such as DigitalOcean).
 
-Один екземпляр на процес, і всі запити (тік воркера й діалог /new) проходять
-через спільний lock: не частіше одного запиту на `min_interval` секунд.
+One instance per process, and all requests (worker ticks and the /new dialog)
+share a lock: at most one request every `min_interval` seconds.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 
 RETRYABLE = frozenset({403, 429, 500, 502, 503, 504})
 ATTEMPTS = 3
-BACKOFF = (2.0, 6.0)  # секунди перед 2-ю і 3-ю спробою (плюс jitter)
+BACKOFF = (2.0, 6.0)  # seconds before the 2nd and 3rd attempt (plus jitter)
 TIMEOUT = httpx.Timeout(30.0)
 
 ClientFactory = Callable[[str | None], httpx.AsyncClient]
@@ -69,10 +70,10 @@ class Http:
                 self._last = time.monotonic()
 
     async def get(self, url: str, *, params=None, headers=None) -> httpx.Response:
-        """Повертає останню відповідь (будь-який статус — розбирає викликач).
+        """Return the last response (any status — the caller interprets it).
 
-        Ретраїть лише 403/429/5xx і транспортні збої; якщо всі спроби впали на
-        транспорті, піднімає останній `httpx.TransportError`.
+        Only 403/429/5xx and transport failures are retried; if every attempt
+        failed at the transport level, the last `httpx.TransportError` is raised.
         """
         result: httpx.Response | httpx.TransportError | None = None
         for attempt in range(ATTEMPTS):

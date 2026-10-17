@@ -1,7 +1,8 @@
-"""Конфіг процесу: `.env`, накритий справжнім оточенням.
+"""Process config: `.env`, overridden by the real environment.
 
-Рідер `.env` свідомо НЕ пише в `os.environ`: інакше значення з файлу осідають
-в оточенні процесу назавжди і перебивають наступні правки `.env`.
+The `.env` reader deliberately does NOT write to `os.environ`: otherwise values
+from the file would stick in the process environment for good and shadow later
+edits to `.env`.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ DEFAULT_THS_API_VERSION = "2025-08-14"
 
 
 def read_dotenv(path: pathlib.Path) -> dict[str, str]:
-    """Мінімальний .env-рідер. Оточення процесу НЕ змінюється."""
+    """Minimal .env reader. The process environment is NOT modified."""
     values: dict[str, str] = {}
     if not path.is_file():
         return values
@@ -27,14 +28,14 @@ def read_dotenv(path: pathlib.Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        # Інлайн-коментар після значення: `KEY=value  # пояснення`.
+        # Inline comment after the value: `KEY=value  # explanation`.
         value = value.split(" #", 1)[0]
         values.setdefault(key.strip(), value.strip().strip('"').strip("'"))
     return values
 
 
 def env_values(path: pathlib.Path | None = None) -> dict[str, str]:
-    """`.env`, накритий справжнім оточенням: змінна з оточення перемагає файл."""
+    """`.env` overridden by the real environment: an environment variable beats the file."""
     values = read_dotenv(path) if path is not None else {}
     values.update(os.environ)
     return values
@@ -60,7 +61,7 @@ class Settings:
         v = env_values(ROOT / ".env") if values is None else values
         mode = v.get("PROXY_MODE") or "fallback"
         if mode not in ("fallback", "always"):
-            raise ValueError(f"PROXY_MODE має бути fallback або always, а не {mode!r}")
+            raise ValueError(f"PROXY_MODE must be fallback or always, not {mode!r}")
         admin_chat = v.get("ADMIN_CHAT_ID") or ""
         db_path = pathlib.Path(v.get("DB_PATH") or "var/petalert.sqlite3")
         return cls(

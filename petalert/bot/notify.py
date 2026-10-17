@@ -1,8 +1,8 @@
-"""Відправка в Telegram для воркера: тротлінг і переклад помилок Telegram.
+"""Sending to Telegram for the worker: throttling and mapping Telegram errors.
 
-Одне повідомлення на секунду на весь процес — із запасом і для ліміту 1/с на
-чат, і для 30/с глобально; при нашому обсязі (десятки алертів за тік) це
-нічого не коштує.
+One message per second for the whole process — comfortably within both the
+1/s per-chat and the 30/s global limits; at our volume (dozens of alerts per
+tick) it costs nothing.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ class TelegramOutbox:
                 except TelegramRetryAfter as exc:
                     if attempt:
                         raise
-                    log.warning("Telegram flood limit, чекаю %s с", exc.retry_after)
+                    log.warning("Telegram flood limit, waiting %s s", exc.retry_after)
                     await asyncio.sleep(exc.retry_after)
                 except TelegramForbiddenError as exc:
                     raise ChatGone(str(exc)) from exc
@@ -62,8 +62,8 @@ class TelegramOutbox:
                 )
                 return
             except TelegramBadRequest as exc:
-                # Telegram не зміг забрати фото за URL — текст важливіший за картинку.
-                log.info("фото %s не пішло (%s), шлю текстом", listing.photo_url, exc)
+                # Telegram couldn't fetch the photo by URL — the text matters more.
+                log.info("photo %s failed (%s), sending as text", listing.photo_url, exc)
         await self._call(
             self.bot.send_message, chat_id=chat_id, text=text, reply_markup=markup,
             link_preview_options=NO_PREVIEW,

@@ -5,7 +5,7 @@ from ..http import Http
 from .base import Source, SourceError
 from .ths import Notice, TrustedHousesitters
 
-# Порядок = порядок кнопок у діалозі /new.
+# Order = button order in the /new dialog.
 REGISTRY = {"ths": TrustedHousesitters}
 
 

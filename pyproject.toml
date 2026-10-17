@@ -1,16 +1,17 @@
 [project]
 name = "petalert"
 version = "0.1.0"
-description = "Telegram-бот: алерти про нові house-sits (TrustedHousesitters, далі інші сайти)"
+description = "Telegram bot that alerts about new house-sits (TrustedHousesitters, more sites later)"
 requires-python = ">=3.12"
 dependencies = [
-    # 3.31 — актуальна на старті проєкту; стеля на мажорі, бо 2→3 вже
-    # перейменовувала класи й атрибути винятків (RetryAfter.timeout →
-    # TelegramRetryAfter.retry_after), і таке ламається лише під флуд-лімітом.
+    # 3.31 was current when the project started; capped at the major version
+    # because 2→3 already renamed exception classes and attributes
+    # (RetryAfter.timeout → TelegramRetryAfter.retry_after), and that kind of
+    # break only shows up under a flood limit.
     "aiogram>=3.31,<4",
-    # Клієнт для сайтів-джерел. aiohttp і так приходить з aiogram, але httpx
-    # дає MockTransport для тестів і простий `proxy=` (0.28 прибрала `proxies=`,
-    # тому нижня межа саме 0.28).
+    # Client for the source sites. aiohttp already comes with aiogram, but httpx
+    # has MockTransport for tests and a simple `proxy=` (0.28 removed
+    # `proxies=`, hence the 0.28 floor).
     "httpx>=0.28,<1",
 ]
 

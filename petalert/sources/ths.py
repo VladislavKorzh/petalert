@@ -1,15 +1,17 @@
-"""TrustedHousesitters: внутрішній JSON API сторінки пошуку.
+"""TrustedHousesitters: the search page's internal JSON API.
 
-`GET /api/v3/search/listings/?query=<JSON>` працює анонімно, але лише з
-`Referer` сторінки пошуку — без нього 401 «Authentication credentials were not
-provided». Формат query знято з JS-бандла сайту (білдер запиту в модулі
-пошуку) і перевірено живими запитами 2026-10-17.
+`GET /api/v3/search/listings/?query=<JSON>` works anonymously, but only with
+the search page as `Referer` — without it the API returns 401 "Authentication
+credentials were not provided". The query format was taken from the site's JS
+bundle (the query builder in the search module) and verified with live
+requests on 2026-10-17.
 
-`api-version` сайт бере з `window.__ENVIRONMENT__` у HTML. Неправильне
-значення дає 406, тому при 406 версія перечитується зі сторінки, а якщо й це
-не допомогло — запит іде без заголовка (без нього API теж відповідає).
+The site takes `api-version` from `window.__ENVIRONMENT__` in the HTML. A wrong
+value gets a 406, so on a 406 the version is re-read from the page, and if
+that doesn't help the request goes without the header (the API answers
+without it too).
 
-Дебаг: `python -m petalert.sources search --continent europe --country portugal`.
+Debug: `python -m petalert.sources search --continent europe --country portugal`.
 """
 
 from __future__ import annotations
@@ -30,17 +32,18 @@ log = logging.getLogger(__name__)
 BASE = "https://www.trustedhousesitters.com"
 SEARCH_PAGE = f"{BASE}/house-and-pet-sitting-assignments/"
 API = f"{BASE}/api/v3/search/listings/"
-# Сайт сам віддає такий розмір прев'ю для соцмереж; довільні трансформації
-# Cloudinary в цього акаунта заборонені (404).
+# The site itself serves this social-preview size; arbitrary Cloudinary
+# transformations are disabled for this account (404).
 PHOTO = "https://res.cloudinary.com/trustedhousesitters/image/upload/t_social_media_preview"
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
 PER_PAGE = 100
-# API віддає лише перші 1000 результатів пошуку: далі 400 «Search results are
-# limited to the first 1000 results» (перевірено 2026-10-17). Тож «повний обхід»
-# широкого фільтра (уся Європа ~2650) — це 1000 найновіших, а не все.
+# The API only returns the first 1000 search results; beyond that it's a 400
+# "Search results are limited to the first 1000 results" (verified 2026-10-17).
+# So a "full crawl" of a broad filter (all of Europe, ~2650) is the 1000 newest,
+# not everything.
 RESULT_LIMIT = 1000
 MAX_PAGES = RESULT_LIMIT // PER_PAGE
 _VERSION_RE = re.compile(r'"apiVersion":"([0-9]{4}-[0-9]{2}-[0-9]{2})"')
@@ -68,7 +71,7 @@ def build_query(
     filters: dict[str, Any] = {
         "activeMembership": True,
         "assignments": assignments,
-        # countryCode API мовчки ігнорує — лише slug.
+        # The API silently ignores countryCode — slug only.
         "geoHierarchy": (
             {"countrySlug": flt.country} if flt.country else {"continentSlug": flt.continent}
         ),
@@ -87,7 +90,7 @@ def build_query(
 
 
 def parse_listing(raw: dict[str, Any]) -> Listing:
-    """Обов'язкове для алерту читається суворо (KeyError), решта — через .get."""
+    """Fields an alert depends on are read strictly (KeyError); the rest via .get."""
     listing_id = str(raw["id"])
     loc = raw["location"]
     slots = tuple(
@@ -204,11 +207,11 @@ class TrustedHousesitters:
                 try:
                     listing = parse_listing(raw)
                 except (KeyError, TypeError, ValueError) as exc:
-                    log.warning("THS: не розібрав оголошення %s: %r", raw.get("id"), exc)
+                    log.warning("THS: could not parse listing %s: %r", raw.get("id"), exc)
                     continue
                 parsed += 1
-                # Між сторінками стрічка зсувається на щойно опубліковані —
-                # той самий listing може прийти двічі.
+                # Between pages the feed shifts by freshly published listings —
+                # the same listing can arrive twice.
                 seen.setdefault(listing.id, listing)
             if results and not parsed:
                 raise SourceError(f"THS listing shape changed: {str(results[0])[:200]}")
@@ -217,7 +220,7 @@ class TrustedHousesitters:
             if max_pages is not None and page >= max_pages:
                 break
             if page >= MAX_PAGES:
-                log.info("THS: ліміт API %s з %s результатів для %s", RESULT_LIMIT, total, flt.to_json())
+                log.info("THS: API limit of %s out of %s results for %s", RESULT_LIMIT, total, flt.to_json())
                 break
             page += 1
         return list(seen.values())

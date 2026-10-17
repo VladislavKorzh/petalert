@@ -1,10 +1,10 @@
-"""Доступ за одноразовими інвайт-кодами.
+"""Access via single-use invite codes.
 
-Гейт стоїть outer-middleware на апдейтах, тож жоден хендлер не бачить
-сторонніх. Адміни (ADMIN_USER_IDS) і ті, хто вже ввів код, проходять; решта
-може лише ввести код — через deep link `t.me/<bot>?start=<код>` або текстом.
-Бот працює лише в приватних чатах: підписка прив'язана до чату, і в групі
-кнопками керував би будь-хто.
+The gate is an outer middleware on updates, so no handler ever sees strangers.
+Admins (ADMIN_USER_IDS) and users who already entered a code pass; everyone
+else can only enter a code — via the deep link `t.me/<bot>?start=<code>` or as
+plain text. The bot only works in private chats: a subscription belongs to a
+chat, and in a group anyone could press its buttons.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ WELCOME = "🎉 You're in!\n\n" + HELP
 
 
 def code_from_text(text: str) -> str | None:
-    """Код із `/start <код>` або з голого тексту; None — якщо там явно не код."""
+    """The code from `/start <code>` or from plain text; None if it clearly isn't one."""
     if text.startswith("/"):
         command, _, arg = text.partition(" ")
         if command.split("@")[0] != "/start":
@@ -65,14 +65,14 @@ class AccessGate(BaseMiddleware):
         return None
 
     def enter_code(self, text: str, user_id: int) -> str:
-        """Спроба входу; повертає відповідь користувачу."""
+        """A sign-in attempt; returns the reply for the user."""
         code = code_from_text(text)
         if code is None or len(code) != CODE_LENGTH:
             return INVITE_ONLY
         if not self.store.redeem(code, user_id):
-            log.info("невдалий код від %s", user_id)
+            log.info("bad code from %s", user_id)
             return BAD_CODE
-        log.info("користувач %s увійшов за кодом", user_id)
+        log.info("user %s signed in with a code", user_id)
         return WELCOME
 
     async def reply(self, message: Message, text: str) -> None:

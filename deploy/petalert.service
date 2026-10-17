@@ -7,10 +7,10 @@ Wants=network-online.target
 Type=simple
 User=petalert
 Group=petalert
-# Код (власник deploy) окремо від стану (власник petalert): сервіс не може
-# переписати власний код, а пише лише в /var/lib/petalert.
+# Code (owned by deploy) is separate from state (owned by petalert): the service
+# can't rewrite its own code and only writes to /var/lib/petalert.
 WorkingDirectory=/srv/petalert
-# uv потрібен лише на деплої (`uv sync --frozen --no-dev`); тут — готовий venv.
+# uv is only needed at deploy time (`uv sync --frozen --no-dev`); this is the built venv.
 ExecStart=/srv/petalert/.venv/bin/python -m petalert
 Restart=always
 RestartSec=10
@@ -22,8 +22,9 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/var/lib/petalert
-# Спокійний процес займає ~180 МБ (aiogram тягне всі pydantic-моделі Bot API);
-# запас — на повний обхід у 10 сторінок. На малому VPS поруч живуть інші сервіси.
+# At rest the process uses ~180 MB (aiogram loads every pydantic model of the
+# Bot API); the headroom is for a 10-page full crawl. On a small VPS other
+# services live alongside.
 MemoryHigh=300M
 MemoryMax=400M
 

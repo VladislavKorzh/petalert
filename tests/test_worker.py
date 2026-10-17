@@ -1,4 +1,4 @@
-"""Воркер на справжній SQLite з фейковим джерелом і фейковим Telegram."""
+"""The worker on real SQLite with a fake source and fake Telegram."""
 
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ def test_baseline_sends_nothing_then_only_new_slots(env):
     assert env.outbox.alerts == [(10, "3", ["c"], [sub])]
 
     env.advance()
-    env.tick()  # нічого нового — нічого не шлемо
+    env.tick()  # nothing new — nothing sent
     assert len(env.outbox.alerts) == 1
 
 
@@ -199,7 +199,7 @@ def test_resume_rebaselines_silently(env):
     env.source.listings = [listing("1", slot("during_pause"))]
     env.tick()
 
-    env.store.set_status(sub, 10, "baselining")  # так робить кнопка Resume
+    env.store.set_status(sub, 10, "baselining")  # this is what the Resume button does
     env.advance()
     env.tick(only_baselining=True)
     assert env.outbox.alerts == []
@@ -218,15 +218,15 @@ def test_overflow_goes_into_one_digest(env):
 
 def test_full_crawl_decision(env):
     env.store.add_subscription(10, "ths", FLT)
-    env.tick()  # baseline — повний
+    env.tick()  # baseline — full
     env.advance(30)
-    env.tick()  # звичайний — сторінка 1
+    env.tick()  # regular — page 1
     env.advance(3 * 60)
-    env.tick()  # простій понад 2 год — повний
+    env.tick()  # downtime over 2 h — full
     env.advance(30)
     env.tick()
     env.now += timedelta(hours=24)
-    env.tick()  # добовий
+    env.tick()  # daily
     assert env.source.calls == [None, 1, None, 1, None]
 
 
@@ -236,7 +236,7 @@ def test_only_baselining_tick_skips_settled_groups(env):
     env.store.add_subscription(10, "ths", Filter("asia"))
     env.advance(1)
     env.tick(only_baselining=True)
-    assert env.source.calls == [None, None]  # лише нова група
+    assert env.source.calls == [None, None]  # only the new group
 
 
 def test_local_filter_guards_against_api_ignoring_a_filter(env):
@@ -259,7 +259,7 @@ def test_health_alert_after_three_failed_ticks_and_recovery(env):
     env.source.error = None
     env.tick()
     assert len(env.admin) == 2 and "is back" in env.admin[1]
-    # Підписка досі чекала baseline — і тільки тепер стала активною, без спаму.
+    # The subscription was still waiting for its baseline — it only becomes active now, without spam.
     assert env.outbox.alerts == []
 
 
@@ -267,7 +267,7 @@ def test_run_loop_polls_at_start_and_baselines_on_wake(env):
     async def scenario():
         task = asyncio.create_task(env.worker.run())
         await asyncio.sleep(0.05)
-        assert env.source.calls == [None]  # стартовий тік: baseline підписки «asia»
+        assert env.source.calls == [None]  # startup tick: baseline of the "asia" subscription
         sub = env.store.add_subscription(10, "ths", FLT)
         env.worker.wake()
         await asyncio.sleep(0.05)

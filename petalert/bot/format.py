@@ -1,7 +1,8 @@
-"""Тексти для Telegram: алерт, дайджест, опис фільтра. Чисті функції.
+"""Telegram texts: alert, digest, filter description. Pure functions.
 
-Parse mode — HTML, тож кожен рядок із сайту йде через `html.escape`: назва
-оголошення «Cats & Dogs <3» інакше зламала б відправку цілого повідомлення.
+Parse mode is HTML, so every string from the site goes through `html.escape`:
+otherwise a listing titled "Cats & Dogs <3" would break sending the whole
+message.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..models import CONTINENTS, Filter, Listing, Slot
 
-CAPTION_LIMIT = 1024  # підпис до фото; рахуємо по HTML, тобто із запасом
+CAPTION_LIMIT = 1024  # photo caption; measured on the HTML, so with headroom
 TEXT_LIMIT = 4096
 TITLE_LIMIT = 200
 
@@ -35,8 +36,8 @@ def pets_line(pets: tuple[tuple[str, int], ...]) -> str:
 
 
 def country_name(slug: str) -> str:
-    """`bosnia-and-herzegovina` → `Bosnia and Herzegovina`. Назви з API не
-    зберігаємо: slug у фільтрі достатньо, а для людей вистачає такого."""
+    """`bosnia-and-herzegovina` → `Bosnia and Herzegovina`. Names from the API
+    aren't stored: the slug in the filter is enough, and this reads fine."""
     words = slug.split("-")
     return " ".join(
         w if i and w in _SMALL_WORDS else w.capitalize() for i, w in enumerate(words)
@@ -54,7 +55,7 @@ def applicants_label(n: int) -> str:
 
 
 def slot_lines(slot: Slot) -> str:
-    """Два рядки на проміжок: дати жирним, під ними тривалість і конкуренція."""
+    """Two lines per slot: dates in bold, then length and competition below."""
     details = [f"⏳ {slot.days} days"]
     if slot.applicants is not None:
         details.append(applicants_label(slot.applicants))
@@ -97,8 +98,8 @@ def render_alert(
 
 
 def render_digest(items: list[tuple[Listing, list[Slot]]]) -> tuple[str, int]:
-    """Текст і скільки пунктів у нього влізло: решту воркер не позначить і
-    надішле наступним тіком."""
+    """The text and how many items fit into it: the worker won't mark the rest
+    and will send them next tick."""
     blocks: list[str] = []
 
     def text(n: int) -> str:

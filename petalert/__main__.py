@@ -1,8 +1,8 @@
-"""Точка входу.
+"""Entry point.
 
-    python -m petalert                        # бот + воркер (так запускає systemd)
-    python -m petalert codes generate 100     # новий пак інвайт-кодів із deep link
-    python -m petalert codes list             # невикористані коди
+    python -m petalert                        # bot + worker (what systemd runs)
+    python -m petalert codes generate 100     # a new pack of invite codes with deep links
+    python -m petalert codes list             # unused codes
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ async def run_bot(settings: Settings) -> None:
 
     await bot.set_my_commands(COMMANDS)
     me = await bot.get_me()
-    log.info("бот @%s, опитування кожні %s, проксі: %s", me.username, settings.poll_interval,
-             settings.proxy_mode if settings.proxy_url else "немає")
+    log.info("bot @%s, polling every %s, proxy: %s", me.username, settings.poll_interval,
+             settings.proxy_mode if settings.proxy_url else "none")
     worker_task = asyncio.create_task(worker.run(), name="worker")
     try:
         await dp.start_polling(bot)
@@ -82,12 +82,12 @@ def codes(args: argparse.Namespace, settings: Settings) -> None:
             for code in new:
                 link = f"  https://t.me/{username}?start={code}" if username else ""
                 print(f"{format_code(code)}{link}")
-            print(f"--- {len(new)} нових кодів; вільних усього: {len(store.unused_codes())}", file=sys.stderr)
+            print(f"--- {len(new)} new codes; unused in total: {len(store.unused_codes())}", file=sys.stderr)
         else:
             unused = store.unused_codes()
             for code in unused:
                 print(format_code(code))
-            print(f"--- вільних: {len(unused)}", file=sys.stderr)
+            print(f"--- unused: {len(unused)}", file=sys.stderr)
     finally:
         store.close()
 
@@ -95,7 +95,7 @@ def codes(args: argparse.Namespace, settings: Settings) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m petalert")
     sub = parser.add_subparsers(dest="cmd")
-    p_codes = sub.add_parser("codes", help="інвайт-коди")
+    p_codes = sub.add_parser("codes", help="invite codes")
     codes_sub = p_codes.add_subparsers(dest="action", required=True)
     gen = codes_sub.add_parser("generate")
     gen.add_argument("n", type=int, nargs="?", default=100)
@@ -111,7 +111,7 @@ def main() -> None:
         codes(args, settings)
         return
     if not settings.bot_token:
-        sys.exit("BOT_TOKEN не задано — див. .env.example")
+        sys.exit("BOT_TOKEN is not set — see .env.example")
     asyncio.run(run_bot(settings))
 
 

@@ -1,8 +1,8 @@
-"""Контракт сайту-джерела.
+"""The contract for a source site.
 
-Новий сайт = один модуль у `sources/`, що реалізує `Source`, і рядок у
-`REGISTRY`. Решта (діалог, воркер, dedup, алерти) працює з нормалізованими
-`Listing`/`Slot` і про конкретний сайт не знає.
+A new site = one module in `sources/` implementing `Source`, plus a line in
+`REGISTRY`. Everything else (dialog, worker, dedup, alerts) works with the
+normalized `Listing`/`Slot` and knows nothing about the specific site.
 """
 
 from __future__ import annotations
@@ -13,17 +13,17 @@ from ..models import Country, Filter, Listing
 
 
 class SourceError(Exception):
-    """Джерело не відповіло як очікувалось: статус, формат, вимоги до запиту."""
+    """The source didn't respond as expected: status, format, request requirements."""
 
 
 class Source(Protocol):
-    key: str  # префікс ключів dedup і значення `subscription.source`
-    title: str  # назва для людей: кнопка в діалозі, підпис алерту
+    key: str  # dedup key prefix and the value of `subscription.source`
+    title: str  # human-readable name: dialog button, alert footer
 
     async def countries(self, continent: str) -> list[Country]:
-        """Країни континенту, де зараз є відкриті сити, найбільші першими."""
+        """Countries of the continent that have open sits right now, largest first."""
         ...
 
     async def search(self, flt: Filter, *, max_pages: int | None) -> list[Listing]:
-        """Оголошення під фільтр, найновіші першими. `None` — усі сторінки."""
+        """Listings matching the filter, newest first. `None` means all pages."""
         ...

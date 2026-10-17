@@ -1,11 +1,11 @@
-"""Дебаг-CLI джерел: подивитись, що бачить бот, без Telegram.
+"""Debug CLI for sources: see what the bot sees, without Telegram.
 
     python -m petalert.sources countries --continent europe
     python -m petalert.sources search --continent europe --country portugal --min-days 14
     python -m petalert.sources dump --continent europe --country portugal > tests/fixtures/x.json
 
-`search` друкує лише ті проміжки, що пройшли локальний фільтр — рівно те, що
-пішло б в алерти. `dump` — сира відповідь THS для фікстур.
+`search` prints only the slots that pass the local filter — exactly what would
+go into alerts. `dump` prints the raw THS response, for fixtures.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _filter(args: argparse.Namespace) -> Filter:
     pets = tuple(p.strip() for p in args.pets.split(",")) if args.pets else ()
     unknown = set(pets) - set(PETS)
     if unknown:
-        sys.exit(f"невідомі тварини: {sorted(unknown)}; можна: {', '.join(PETS)}")
+        sys.exit(f"unknown pets: {sorted(unknown)}; allowed: {', '.join(PETS)}")
     return Filter(
         continent=args.continent,
         country=args.country,
@@ -51,7 +51,7 @@ async def _run(args: argparse.Namespace) -> None:
                 print(f"{c.slug:30} {c.count:5}  {c.name}")
         elif args.cmd == "dump":
             if not isinstance(source, TrustedHousesitters):
-                sys.exit("dump поки вміє лише THS")
+                sys.exit("dump only supports THS for now")
             query = build_query(_filter(args), date.today(), facets=tuple(args.facets or ()))
             query["resultsPerPage"] = args.per_page
             print(json.dumps(await source._query(query), ensure_ascii=False, indent=1))
@@ -86,10 +86,10 @@ def main() -> None:
         p.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
         p.add_argument("--min-days", type=int)
         p.add_argument("--max-days", type=int)
-        p.add_argument("--pets", help="через кому: cat,dog")
-        p.add_argument("--exclude", help="slug країн через кому: united-kingdom,ireland")
+        p.add_argument("--pets", help="comma-separated: cat,dog")
+        p.add_argument("--exclude", help="comma-separated country slugs: united-kingdom,ireland")
         if name == "search":
-            p.add_argument("--pages", type=int, default=1, help="0 = усі сторінки")
+            p.add_argument("--pages", type=int, default=1, help="0 = all pages")
         else:
             p.add_argument("--per-page", type=int, default=PER_PAGE)
             p.add_argument("--facets", nargs="*")

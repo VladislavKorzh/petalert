@@ -22,7 +22,7 @@ def test_subscription_lifecycle_and_ownership(store):
     (sub,) = store.subscriptions(10)
     assert (sub.id, sub.status, sub.filter) == (sub_id, "baselining", FLT)
 
-    # Чужий chat_id з підробленою кнопкою нічого не змінює.
+    # Someone else's chat_id with a forged button changes nothing.
     assert not store.set_status(sub_id, 99, "paused")
     assert not store.delete(sub_id, 99)
     assert store.set_status(sub_id, 10, "paused")
@@ -38,7 +38,7 @@ def test_finish_baseline_only_while_still_baselining(store):
     assert store.subscription(sub_id, 10).status == "active"
 
     other = store.add_subscription(10, "ths", FLT)
-    store.set_status(other, 10, "paused")  # паузу натиснули посеред обходу
+    store.set_status(other, 10, "paused")  # paused in the middle of the crawl
     assert not store.finish_baseline(other, [("ths:2", date(2026, 12, 1))])
     assert store.delivered_keys(other) == set()
 
@@ -48,7 +48,7 @@ def test_delete_cascades_and_marking_a_deleted_sub_is_a_noop(store):
     store.mark_delivered(sub_id, [("ths:1", date(2026, 12, 1))])
     store.delete(sub_id, 10)
     assert store.conn.execute("SELECT count(*) FROM delivered").fetchone()[0] == 0
-    store.mark_delivered(sub_id, [("ths:2", date(2026, 12, 1))])  # без IntegrityError
+    store.mark_delivered(sub_id, [("ths:2", date(2026, 12, 1))])  # no IntegrityError
     assert store.conn.execute("SELECT count(*) FROM delivered").fetchone()[0] == 0
 
 
@@ -88,9 +88,9 @@ def test_codes_are_single_use(store):
 
     code = codes[0]
     assert not store.is_allowed(1)
-    assert store.redeem(format_code(code).lower(), 1)  # «abcd-efgh» теж приймається
+    assert store.redeem(format_code(code).lower(), 1)  # "abcd-efgh" is accepted too
     assert store.is_allowed(1)
-    assert not store.redeem(code, 2)  # той самий код удруге — ні
+    assert not store.redeem(code, 2)  # the same code a second time — no
     assert not store.is_allowed(2)
     assert not store.redeem("NOPE-NOPE", 2)
     assert code not in store.unused_codes() and len(store.unused_codes()) == 99
