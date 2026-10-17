@@ -21,8 +21,9 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ..http import Http
 from ..models import Country, Filter, Listing, Slot
@@ -55,6 +56,7 @@ FAR_FUTURE = "2100-01-01T00:00:00"  # a cursor that keeps every dated listing
 # says: it costs at most a few requests and catches dates added to old listings
 # without a `published` bump (rare, but it happens).
 SMALL_TOTAL = 300
+LONDON = ZoneInfo("Europe/London")  # `published` is naive local time of the site
 _VERSION_RE = re.compile(r'"apiVersion":"([0-9]{4}-[0-9]{2}-[0-9]{2})"')
 
 Notice = Callable[[str], Awaitable[None]]
@@ -105,6 +107,16 @@ def build_query(
     }
 
 
+def _published(raw: dict[str, Any]) -> datetime | None:
+    value = raw.get("published")
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=LONDON).astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_listing(raw: dict[str, Any]) -> Listing:
     """Fields an alert depends on are read strictly (KeyError); the rest via .get."""
     listing_id = str(raw["id"])
@@ -116,6 +128,9 @@ def parse_listing(raw: dict[str, Any]) -> Listing:
             end=date.fromisoformat(a["endDate"]),
             is_open=not a["isConfirmed"] and not a["isReviewing"],
             applicants=a.get("numberOfApplicants"),
+            # Assignment ids grow over time — that's how "created after the
+            # subscription" is told apart from "seen for the first time".
+            seq=int(a["id"]) if str(a["id"]).isdigit() else None,
         )
         for a in raw["assignments"]
     )
@@ -138,6 +153,7 @@ def parse_listing(raw: dict[str, Any]) -> Listing:
             (a["name"], int(a.get("count") or 1)) for a in raw.get("animals") or [] if a.get("name")
         ),
         slots=slots,
+        published=_published(raw),
     )
 
 

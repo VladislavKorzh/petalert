@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 CONTINENTS: dict[str, str] = {
     "europe": "Europe",
@@ -85,6 +85,7 @@ class Slot:
     end: date
     is_open: bool  # neither confirmed nor under review
     applicants: int | None = None
+    seq: int | None = None  # source id if it grows over time (THS: yes), else None
 
     @property
     def days(self) -> int:
@@ -104,6 +105,7 @@ class Listing:
     photo_url: str | None
     pets: tuple[tuple[str, int], ...]  # (("cat", 2), ("dog", 1))
     slots: tuple[Slot, ...] = field(default=())
+    published: datetime | None = None  # last (re)publication, UTC; None if unknown
 
 
 @dataclass(frozen=True)
@@ -144,6 +146,27 @@ def matching_slots(listing: Listing, flt: Filter, today: date) -> list[Slot]:
             continue
         out.append(slot)
     return out
+
+
+def appeared_after(
+    listing: Listing, slot: Slot, since: datetime | None, watermark: int | None
+) -> bool:
+    """Whether a slot is news for a subscription baselined at `since`.
+
+    "Unseen" isn't enough: a slot can be unseen and still old — the baseline
+    missed it, or it only just came into reach. News means the listing was
+    (re)published after the baseline (it is at the top of the site as new), or
+    the slot itself was created after it: its id is above the highest id the
+    baseline saw (`watermark`; THS ids grow over time). A sit that only
+    re-opens, or an old listing coming back from a pause without a re-publish,
+    is not news. Without the information (no baseline time yet, a source
+    without growing ids) every unseen slot counts as news.
+    """
+    if since is not None and listing.published is not None and listing.published > since:
+        return True
+    if watermark is not None and slot.seq is not None:
+        return slot.seq > watermark
+    return since is None or listing.published is None
 
 
 def slot_key(listing: Listing, slot: Slot) -> str:

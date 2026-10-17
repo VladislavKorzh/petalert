@@ -6,6 +6,9 @@ on existing listings where the owner has added new dates. The only source so
 far is [TrustedHousesitters](https://www.trustedhousesitters.com) (the search
 page's internal JSON API, no login).
 
+- Only news: a listing (re)published after you subscribed, or dates created
+  after you subscribed. An old listing the bot merely sees for the first time
+  (or a sit that only re-opens) is noted silently, never alerted.
 - Multiple users, each with their own subscriptions (`/new`, `/list`).
 - Access via single-use invite codes.
 - Filters: continent, country (or "all except…"), a date window (the sit must
@@ -27,6 +30,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
                          · page 1 every tick (the whole filter if ≤ 300 results),
                            full crawl every 3 h / after downtime
                          · dedup by date-slot id, marked only after a successful send
+                         · news = published after the baseline, or a slot id above
+                           the highest one the baseline saw (THS ids grow over time)
 ```
 
 | File | Purpose |

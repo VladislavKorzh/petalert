@@ -33,7 +33,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from .db import Store, Subscription, utcnow
-from .models import Filter, Listing, Slot, listing_matches, matching_slots, slot_key
+from .models import Filter, Listing, Slot, appeared_after, listing_matches, matching_slots, slot_key
 from .sources.base import Source
 
 log = logging.getLogger(__name__)
@@ -254,13 +254,15 @@ class Worker:
                 # it has started ignoring one of the filters.
                 log.warning("%s %s: local filter dropped %d of %d", source_key, filter_json, dropped, len(listings))
 
+            watermark = max((s.seq for l in listings for s in l.slots if s.seq is not None), default=None)
             for sub in subs:
                 known = self.store.delivered_keys(sub.id)
                 fresh = [(l, s) for l, s in matches if slot_key(l, s) not in known]
                 if sub.status == "baselining":
                     if partial:
                         continue  # a baseline needs the full crawl; retried next tick
-                    if self.store.finish_baseline(sub, [(slot_key(l, s), s.end) for l, s in fresh]):
+                    keys = [(slot_key(l, s), s.end) for l, s in fresh]
+                    if self.store.finish_baseline(sub, keys, watermark=watermark, at=now):
                         n = len({l.id for l, _ in matches})
                         await self._text(
                             sub.chat_id,
@@ -269,6 +271,13 @@ class Worker:
                             "🔔 I'll message you as soon as new dates appear.",
                         )
                     continue
+                # Unseen but old (the baseline missed it, or it just came into
+                # reach): note it silently instead of alerting.
+                old = [(l, s) for l, s in fresh if not appeared_after(l, s, sub.baseline_at, sub.watermark)]
+                if old:
+                    self.store.mark_delivered(sub, [(slot_key(l, s), s.end) for l, s in old])
+                    log.info("#%d: %d old slots seen for the first time, not alerted", sub.id, len(old))
+                    fresh = [f for f in fresh if f not in old]
                 stats.fresh += len(fresh)
                 if full:
                     stats.full_crawl_new += sum(l.id not in top for l, _ in fresh)

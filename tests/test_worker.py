@@ -420,3 +420,32 @@ def test_failing_full_crawl_never_finishes_a_baseline_on_page_one(env):
     assert [a[:2] for a in env.outbox.alerts] == [(10, "1")]  # the active one still hears about it
     assert env.store.subscription(new, 20).status == "baselining"
     assert env.store.subscription(old, 10).status == "active"
+
+
+def test_old_listing_seen_for_the_first_time_is_not_news(env):
+    from datetime import UTC, datetime
+
+    def dated(lid, published, *slots):
+        return Listing(source="ths", id=lid, title=lid, url=f"u/{lid}", continent="europe",
+                       country="sweden", place="p", photo_url=None, pets=(), slots=slots,
+                       published=published)
+
+    def seq_slot(n):
+        return Slot(str(n), date(2026, 12, 12), date(2027, 1, 10), True, seq=n)
+
+    long_ago = datetime(2026, 10, 8, 8, 23, tzinfo=UTC)
+    env.source.listings = [dated("seen", long_ago, seq_slot(2131000))]
+    sub = env.store.add_subscription(10, "ths", FLT)
+    env.tick()  # baseline sees ids up to 2131000; "stan" is out of reach
+    assert env.store.subscription(sub, 10).watermark == 2131000
+
+    env.advance()
+    later = env.now + timedelta(minutes=5)
+    env.source.listings += [
+        dated("stan", long_ago, seq_slot(2111592)),         # old listing, old slot: just unseen
+        dated("newdates", long_ago, seq_slot(2131900)),     # old listing, dates added now
+        dated("republished", later, seq_slot(2083944)),      # re-published after the baseline
+    ]
+    env.tick()
+    assert sorted(a[1] for a in env.outbox.alerts) == ["newdates", "republished"]
+    assert "ths:2111592" in env.store.delivered_keys(sub)  # noted silently, never alerted later

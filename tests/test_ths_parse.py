@@ -68,3 +68,15 @@ def test_missing_required_field_raises(path):
     del target[path[-1]]
     with pytest.raises(KeyError):
         parse_listing(r)
+
+
+def test_published_is_london_time_converted_to_utc_and_slot_ids_are_sequenced():
+    from datetime import UTC, datetime
+
+    r = raw("2214923")
+    r["published"] = "2026-10-17T17:27:00"  # BST
+    listing = parse_listing(r)
+    assert listing.published == datetime(2026, 10, 17, 16, 27, tzinfo=UTC)
+    assert listing.slots[0].seq == int(listing.slots[0].id)
+    r["published"] = None
+    assert parse_listing(r).published is None

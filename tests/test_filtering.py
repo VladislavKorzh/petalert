@@ -79,3 +79,29 @@ def test_exclusions_keep_old_filter_json_stable():
     flt = Filter("europe", exclude_countries=("ireland", "united-kingdom"))
     assert Filter.from_json(flt.to_json()) == flt
     assert flt.to_json() == Filter("europe", exclude_countries=("united-kingdom", "ireland")).to_json()
+
+
+def test_news_means_published_or_created_after_the_baseline():
+    from datetime import UTC, datetime
+
+    from petalert.models import appeared_after
+
+    since = datetime(2026, 10, 17, 16, 27, tzinfo=UTC)
+    old_pub = datetime(2026, 10, 8, 8, 23, tzinfo=UTC)
+    new_pub = datetime(2026, 10, 17, 19, 0, tzinfo=UTC)
+
+    def lst(published):
+        return Listing(source="ths", id="1", title="t", url="u", continent="europe", country="se",
+                       place="p", photo_url=None, pets=(), published=published)
+
+    old_slot = Slot("2111592", date(2026, 12, 12), date(2027, 1, 10), True, seq=2111592)
+    new_slot = Slot("2131900", date(2026, 12, 12), date(2027, 1, 10), True, seq=2131900)
+    # The "Stan in Sweden" case: an old slot on an old listing, merely unseen.
+    assert not appeared_after(lst(old_pub), old_slot, since, 2131639)
+    # New dates on an old listing, without a re-publish.
+    assert appeared_after(lst(old_pub), new_slot, since, 2131639)
+    # A listing (re)published after the baseline, even with an older slot.
+    assert appeared_after(lst(new_pub), old_slot, since, 2131639)
+    # Nothing known: fall back to "unseen = news".
+    assert appeared_after(lst(None), Slot("x", date(2026, 12, 1), date(2026, 12, 9), True), since, None)
+    assert appeared_after(lst(old_pub), old_slot, None, None)

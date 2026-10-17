@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS {name} (
     source      TEXT NOT NULL,
     filter_json TEXT NOT NULL,             -- Filter.to_json(); (source, filter_json) is the group key
     status      TEXT NOT NULL CHECK (status IN ('baselining', 'active', 'paused')),
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    baseline_at TEXT,                      -- when it last became active (see models.appeared_after)
+    watermark   INTEGER                    -- highest slot id the baseline saw
 );"""
 
 SCHEMA = """
@@ -101,6 +103,8 @@ class Subscription:
     filter: Filter
     status: Status
     filter_json: str  # as stored; with id and chat_id it identifies this exact subscription
+    baseline_at: datetime | None = None
+    watermark: int | None = None
 
     @property
     def group(self) -> tuple[str, str]:
@@ -115,6 +119,8 @@ def _sub(row: sqlite3.Row) -> Subscription:
         filter=Filter.from_json(row["filter_json"]),
         status=row["status"],
         filter_json=row["filter_json"],
+        baseline_at=_ts(row["baseline_at"]),
+        watermark=row["watermark"],
     )
 
 
@@ -132,6 +138,23 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA.format(subscription=SUBSCRIPTION_TABLE.format(name="subscription")))
         self._migrate_autoincrement()
+        self._migrate_baseline_columns()
+
+    def _migrate_baseline_columns(self) -> None:
+        """Older databases lack baseline_at/watermark. Backfill active ones from
+        what they know: created_at, and the highest slot id already delivered."""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(subscription)")}
+        with self.tx() as conn:
+            if "baseline_at" not in have:
+                conn.execute("ALTER TABLE subscription ADD COLUMN baseline_at TEXT")
+            if "watermark" not in have:
+                conn.execute("ALTER TABLE subscription ADD COLUMN watermark INTEGER")
+            conn.execute(
+                "UPDATE subscription SET baseline_at = created_at, watermark = ("
+                "  SELECT MAX(CAST(substr(slot_key, instr(slot_key, ':') + 1) AS INTEGER))"
+                "  FROM delivered WHERE sub_id = subscription.id)"
+                " WHERE baseline_at IS NULL AND status != 'baselining'"
+            )
 
     def _migrate_autoincrement(self) -> None:
         """Databases created before AUTOINCREMENT get the table rebuilt once
@@ -231,7 +254,14 @@ class Store:
         )
         return cur.rowcount
 
-    def finish_baseline(self, sub: Subscription, items: Iterable[tuple[str, date]]) -> bool:
+    def finish_baseline(
+        self,
+        sub: Subscription,
+        items: Iterable[tuple[str, date]],
+        *,
+        watermark: int | None = None,
+        at: datetime | None = None,
+    ) -> bool:
         """Mark everything seen and switch to active — atomically.
 
         Only if that exact subscription is still `baselining`: during the full
@@ -242,9 +272,9 @@ class Store:
         """
         with self.tx() as conn:
             cur = conn.execute(
-                "UPDATE subscription SET status = 'active'"
+                "UPDATE subscription SET status = 'active', baseline_at = ?, watermark = ?"
                 " WHERE id = ? AND chat_id = ? AND filter_json = ? AND status = 'baselining'",
-                (sub.id, sub.chat_id, sub.filter_json),
+                ((at or utcnow()).isoformat(), watermark, sub.id, sub.chat_id, sub.filter_json),
             )
             if cur.rowcount != 1:
                 return False

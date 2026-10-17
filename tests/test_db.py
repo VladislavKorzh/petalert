@@ -139,14 +139,23 @@ def test_old_database_is_migrated_to_never_reuse_ids(tmp_path):
             slot_key TEXT NOT NULL, end_date TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (sub_id, slot_key)) WITHOUT ROWID;
     """)
     fj = FLT.to_json()
-    old.execute("INSERT INTO subscription VALUES (1, 10, 'ths', ?, 'active', 'x'), (2, 10, 'ths', ?, 'active', 'x')", (fj, fj))
+    created = "2026-10-17T16:27:00+00:00"
+    old.execute(
+        "INSERT INTO subscription VALUES (1, 10, 'ths', ?, 'active', ?), (2, 10, 'ths', ?, 'active', ?)",
+        (fj, created, fj, created),
+    )
     old.execute("INSERT INTO delivered VALUES (1, 'ths:a', '2030-01-01', 'x'), (2, 'ths:b', '2030-01-01', 'x')")
+    old.execute("INSERT INTO delivered VALUES (1, 'ths:2131639', '2030-01-01', 'x'), (1, 'ths:2088621', '2030-01-01', 'x')")
     old.commit()
     old.close()
 
     store = Store(path)
     assert [s.id for s in store.subscriptions(10)] == [1, 2]
-    assert store.delivered_keys(1) == {"ths:a"} and store.delivered_keys(2) == {"ths:b"}
+    assert store.delivered_keys(1) == {"ths:a", "ths:2131639", "ths:2088621"}
+    assert store.delivered_keys(2) == {"ths:b"}
+    # Backfill: baseline time from created_at, watermark = highest delivered slot id.
+    first = store.subscription(1, 10)
+    assert first.baseline_at.isoformat() == created and first.watermark == 2131639
     store.delete(2, 10)
     assert store.add_subscription(10, "ths", FLT) == 3  # not 2 again
     store.delete(1, 10)
