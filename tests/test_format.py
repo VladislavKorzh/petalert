@@ -9,6 +9,7 @@ from petalert.bot.format import (
     describe_filter,
     render_alert,
     render_digest,
+    tg_len,
 )
 from petalert.models import Filter, Listing, Slot
 
@@ -42,7 +43,7 @@ def test_zero_applicants_is_highlighted():
 
 def test_caption_is_truncated_by_dropping_date_lines():
     text, _ = render_alert(listing(title="x" * 500), [slot(i) for i in range(30)], [1, 2], "THS")
-    assert len(text) <= CAPTION_LIMIT
+    assert tg_len(text) <= CAPTION_LIMIT
     assert "more dates" in text and text.endswith("🔔 Subscription #1, #2 · THS")
 
 
@@ -54,7 +55,7 @@ def test_html_is_escaped():
 def test_digest_reports_how_many_items_fit():
     items = [(listing(title="y" * 200, lid=str(i)), [slot(i)]) for i in range(40)]
     text, included = render_digest(items)
-    assert len(text) <= TEXT_LIMIT
+    assert tg_len(text) <= TEXT_LIMIT
     assert 0 < included < 40
     assert text.count("<a href") == included
     assert text.startswith(f"📋 <b>{included} more new listings</b>")
@@ -80,3 +81,9 @@ def test_describe_filter():
 def test_country_name():
     assert country_name("united-kingdom") == "United Kingdom"
     assert country_name("isle-of-man") == "Isle of Man"
+
+
+def test_tg_len_counts_like_telegram():
+    # Tags don't count, entities count as one character, an emoji is 2 UTF-16 units.
+    assert tg_len("<b>a&amp;b</b>") == 3
+    assert tg_len("🏡 x") == 4

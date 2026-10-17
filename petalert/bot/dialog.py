@@ -19,18 +19,20 @@ import logging
 import re
 from datetime import date
 
-from aiogram import F, Router
+from aiogram import BaseMiddleware, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InaccessibleMessage, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..db import Store
 from ..models import CONTINENTS, PETS, Filter
 from ..scheduler import Worker
 from .format import PET_EMOJI, describe_filter
+from .ui import STALE, answer, chat_id, edit, edit_markup
 
 log = logging.getLogger(__name__)
 
@@ -236,22 +238,52 @@ def _country_at(data: dict, value: str) -> str | None:
     return countries[int(value)][0]
 
 
-async def _show(target: Message, text: str, markup: InlineKeyboardMarkup, *, edit: bool) -> None:
-    if edit:
-        await target.edit_text(text, reply_markup=markup)
-    else:
-        await target.answer(text, reply_markup=markup)
+async def _show(
+    target: Message | InaccessibleMessage,
+    state: FSMContext,
+    text: str,
+    markup: InlineKeyboardMarkup,
+    *,
+    edit: bool,
+) -> None:
+    if edit and isinstance(target, Message):
+        try:
+            await target.edit_text(text, reply_markup=markup)
+        except TelegramBadRequest as exc:
+            if "message is not modified" not in str(exc):
+                raise
+        return
+    if isinstance(target, Message):
+        sent = await target.answer(text, reply_markup=markup)
+    else:  # too old to edit (48 h) — continue in a fresh message
+        sent = await target.bot.send_message(target.chat.id, text, reply_markup=markup)
+    # Only this message's buttons belong to the dialog from now on.
+    await state.update_data(msg_id=sent.message_id)
+
+
+class CurrentDialogOnly(BaseMiddleware):
+    """Buttons of any other message (an earlier or abandoned /new) are stale:
+    acting on them would mix two dialogs' choices."""
+
+    async def __call__(self, handler, event: CallbackQuery, data):
+        state: FSMContext = data["state"]
+        current = (await state.get_data()).get("msg_id")
+        if current is None or event.message is None or event.message.message_id != current:
+            await answer(event, STALE, show_alert=True)
+            return None
+        return await handler(event, data)
 
 
 async def ask_continent(target: Message, state: FSMContext, *, edit: bool) -> None:
     await state.set_state(NewSub.continent)
-    await _show(target, "🌍 <b>Step 1 · Continent</b>\nWhere do you want to sit?", continents_keyboard(), edit=edit)
+    await _show(target, state, "🌍 <b>Step 1 · Continent</b>\nWhere do you want to sit?", continents_keyboard(), edit=edit)
 
 
 async def ask_country(target: Message, state: FSMContext, page: int) -> None:
     await state.set_state(NewSub.country)
     data = await state.get_data()
     countries = data["countries"]
+    page = max(0, min(page, (len(countries) - 1) // COUNTRIES_PER_PAGE))
     text = (
         f"🗺 <b>Step 2 · Country in {CONTINENTS[data['continent']]}</b>\n"
         "Pick one, any, or 🚫 exclude some.\n"
@@ -262,7 +294,7 @@ async def ask_country(target: Message, state: FSMContext, page: int) -> None:
             f"🗺 <b>Step 2 · Country</b>\nNo open sits in {CONTINENTS[data['continent']]} "
             "right now — you can still subscribe."
         )
-    await _show(target, text, countries_keyboard(countries, page), edit=True)
+    await _show(target, state, text, countries_keyboard(countries, page), edit=True)
 
 
 async def ask_exclude(target: Message, state: FSMContext, page: int) -> None:
@@ -274,7 +306,8 @@ async def ask_exclude(target: Message, state: FSMContext, page: int) -> None:
         "Tap again to undo, then <b>Done</b>."
     )
     excluded = data.get("exclude") or []
-    await _show(target, text, countries_keyboard(data["countries"], page, excluded), edit=True)
+    page = max(0, min(page, (len(data["countries"]) - 1) // COUNTRIES_PER_PAGE))
+    await _show(target, state, text, countries_keyboard(data["countries"], page, excluded), edit=True)
 
 
 async def ask_dates(target: Message, state: FSMContext, *, edit: bool) -> None:
@@ -286,7 +319,7 @@ async def ask_dates(target: Message, state: FSMContext, *, edit: bool) -> None:
         "• <code>01.11.2026 - 31.01.2027</code>\n"
         "or tap <b>Any dates</b>."
     )
-    await _show(target, text, dates_keyboard(), edit=edit)
+    await _show(target, state, text, dates_keyboard(), edit=edit)
 
 
 async def ask_duration(target: Message, state: FSMContext, *, edit: bool) -> None:
@@ -295,7 +328,7 @@ async def ask_duration(target: Message, state: FSMContext, *, edit: bool) -> Non
         "⏳ <b>Step 4 · Length</b>\n"
         "Tap a preset, or send <code>7</code> (minimum) or <code>7-21</code> (min–max days)."
     )
-    await _show(target, text, duration_keyboard(), edit=edit)
+    await _show(target, state, text, duration_keyboard(), edit=edit)
 
 
 async def ask_pets(target: Message, state: FSMContext, *, edit: bool) -> None:
@@ -306,7 +339,7 @@ async def ask_pets(target: Message, state: FSMContext, *, edit: bool) -> None:
         "A listing matches if it has <b>at least one</b> of the selected.\n"
         "Leave empty for any, then <b>Done</b>."
     )
-    await _show(target, text, pets_keyboard(selected), edit=edit)
+    await _show(target, state, text, pets_keyboard(selected), edit=edit)
 
 
 async def ask_confirm(target: Message, state: FSMContext, sources, *, edit: bool) -> None:
@@ -314,7 +347,7 @@ async def ask_confirm(target: Message, state: FSMContext, sources, *, edit: bool
     data = await state.get_data()
     title = sources[data["source"]].title
     text = f"📝 <b>Check your subscription</b> · {title}\n\n{describe_filter(_filter(data))}"
-    await _show(target, text, confirm_keyboard(), edit=edit)
+    await _show(target, state, text, confirm_keyboard(), edit=edit)
 
 
 async def cmd_new(message: Message, state: FSMContext, sources) -> None:
@@ -325,36 +358,45 @@ async def cmd_new(message: Message, state: FSMContext, sources) -> None:
         await ask_continent(message, state, edit=False)
         return
     await state.set_state(NewSub.source)
-    await message.answer("Which site?", reply_markup=sources_keyboard(sources))
+    await _show(message, state, "Which site?", sources_keyboard(sources), edit=False)
 
 
 async def on_cancel(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await query.message.edit_text("✖️ Cancelled.")
-    await query.answer()
+    await edit(query, "✖️ Cancelled.")
+    await answer(query)
 
 
 async def on_source(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
     if callback_data.value not in sources:
-        await query.answer("Unknown site", show_alert=True)
+        await answer(query, "Unknown site", show_alert=True)
         return
     await state.update_data(source=callback_data.value)
     await ask_continent(query.message, state, edit=True)
-    await query.answer()
+    await answer(query)
 
 
 async def on_continent(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
     if callback_data.value not in CONTINENTS:
-        await query.answer("Unknown continent", show_alert=True)
+        await answer(query, "Unknown continent", show_alert=True)
         return
-    await query.answer("Loading countries…")
-    source = sources[(await state.get_data())["source"]]
+    # Read the dialog before any network await: a /cancel meanwhile clears it.
+    source = sources.get((await state.get_data()).get("source"))
+    if source is None:
+        await answer(query, STALE, show_alert=True)
+        return
+    await answer(query, "Loading countries…")
     try:
         countries = await source.countries(callback_data.value)
     except Exception:
         log.exception("countries(%s) failed", callback_data.value)
+        countries = None
+    data = await state.get_data()
+    if await state.get_state() != NewSub.continent.state or data.get("msg_id") != query.message.message_id:
+        return  # cancelled, restarted or double-tapped while the countries were loading
+    if countries is None:
         await state.clear()
-        await query.message.edit_text("⚠️ Couldn't load countries right now. Try /new again in a few minutes.")
+        await edit(query, "⚠️ Couldn't load countries right now. Try /new again in a few minutes.")
         return
     await state.update_data(
         continent=callback_data.value,
@@ -364,8 +406,11 @@ async def on_continent(query: CallbackQuery, callback_data: Pick, state: FSMCont
 
 
 async def on_country_page(query: CallbackQuery, callback_data: Pick, state: FSMContext) -> None:
+    if not callback_data.value.isdigit():
+        await answer(query, "Unknown page", show_alert=True)
+        return
     await ask_country(query.message, state, page=int(callback_data.value))
-    await query.answer()
+    await answer(query)
 
 
 async def on_country(query: CallbackQuery, callback_data: Pick, state: FSMContext) -> None:
@@ -373,29 +418,32 @@ async def on_country(query: CallbackQuery, callback_data: Pick, state: FSMContex
     if callback_data.value != ANY:
         country = _country_at(await state.get_data(), callback_data.value)
         if country is None:
-            await query.answer("Unknown country", show_alert=True)
+            await answer(query, "Unknown country", show_alert=True)
             return
     await state.update_data(country=country, exclude=[], countries=None)
     await ask_dates(query.message, state, edit=True)
-    await query.answer()
+    await answer(query)
 
 
 async def on_exclude_mode(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(exclude=[])
     await ask_exclude(query.message, state, page=0)
-    await query.answer()
+    await answer(query)
 
 
 async def on_exclude_page(query: CallbackQuery, callback_data: Pick, state: FSMContext) -> None:
+    if not callback_data.value.isdigit():
+        await answer(query, "Unknown page", show_alert=True)
+        return
     await ask_exclude(query.message, state, page=int(callback_data.value))
-    await query.answer()
+    await answer(query)
 
 
 async def on_exclude_toggle(query: CallbackQuery, callback_data: Pick, state: FSMContext) -> None:
     data = await state.get_data()
     slug = _country_at(data, callback_data.value)
     if slug is None:
-        await query.answer("Unknown country", show_alert=True)
+        await answer(query, "Unknown country", show_alert=True)
         return
     excluded = list(data.get("exclude") or [])
     if slug in excluded:
@@ -404,22 +452,23 @@ async def on_exclude_toggle(query: CallbackQuery, callback_data: Pick, state: FS
         excluded.append(slug)
     await state.update_data(exclude=excluded)
     page = int(callback_data.value) // COUNTRIES_PER_PAGE
-    await query.message.edit_reply_markup(
-        reply_markup=countries_keyboard(data["countries"], page, excluded)
-    )
-    await query.answer()
+    if isinstance(query.message, Message):
+        await edit_markup(query, countries_keyboard(data["countries"], page, excluded))
+    else:  # too old to edit: show the step again in a fresh message
+        await ask_exclude(query.message, state, page)
+    await answer(query)
 
 
 async def on_exclude_done(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(country=None, countries=None)
     await ask_dates(query.message, state, edit=True)
-    await query.answer()
+    await answer(query)
 
 
 async def on_any_dates(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(date_from=None, date_to=None)
     await ask_duration(query.message, state, edit=True)
-    await query.answer()
+    await answer(query)
 
 
 async def on_dates_text(message: Message, state: FSMContext) -> None:
@@ -433,10 +482,13 @@ async def on_dates_text(message: Message, state: FSMContext) -> None:
 
 
 async def on_duration(query: CallbackQuery, callback_data: Pick, state: FSMContext) -> None:
+    if callback_data.value != ANY and callback_data.value not in {str(d) for d in DURATION_PRESETS}:
+        await answer(query, "Unknown length", show_alert=True)
+        return
     low = None if callback_data.value == ANY else int(callback_data.value)
     await state.update_data(min_days=low, max_days=None)
     await ask_pets(query.message, state, edit=True)
-    await query.answer()
+    await answer(query)
 
 
 async def on_duration_text(message: Message, state: FSMContext) -> None:
@@ -451,7 +503,7 @@ async def on_duration_text(message: Message, state: FSMContext) -> None:
 
 async def on_pet_toggle(query: CallbackQuery, callback_data: Pick, state: FSMContext) -> None:
     if callback_data.value not in PETS:
-        await query.answer("Unknown pet", show_alert=True)
+        await answer(query, "Unknown pet", show_alert=True)
         return
     selected = list((await state.get_data()).get("pets") or [])
     if callback_data.value in selected:
@@ -459,33 +511,38 @@ async def on_pet_toggle(query: CallbackQuery, callback_data: Pick, state: FSMCon
     else:
         selected.append(callback_data.value)
     await state.update_data(pets=selected)
-    await query.message.edit_reply_markup(reply_markup=pets_keyboard(selected))
-    await query.answer()
+    if isinstance(query.message, Message):
+        await edit_markup(query, pets_keyboard(selected))
+    else:  # too old to edit: show the step again in a fresh message
+        await ask_pets(query.message, state, edit=True)
+    await answer(query)
 
 
 async def on_pets_done(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
     if callback_data.value == ANY:
         await state.update_data(pets=[])
     await ask_confirm(query.message, state, sources, edit=True)
-    await query.answer()
+    await answer(query)
 
 
 async def on_save(query: CallbackQuery, state: FSMContext, store: Store, worker: Worker) -> None:
     data = await state.get_data()
-    sub_id = store.add_subscription(query.message.chat.id, data["source"], _filter(data))
+    sub_id = store.add_subscription(chat_id(query), data["source"], _filter(data))
     await state.clear()
-    await query.message.edit_text(
+    await answer(query, "Saved")
+    await edit(
+        query,
         f"💾 <b>Subscription #{sub_id} saved</b>\n\n{describe_filter(_filter(data))}\n\n"
         "⏳ Indexing current listings — I'll tell you when it's live, "
         "then message you only about new dates."
     )
-    await query.answer("Saved")
     worker.wake()
 
 
 def build_router() -> Router:
     """A fresh router per Dispatcher: aiogram only lets a router be attached once."""
     router = Router(name="dialog")
+    router.callback_query.middleware(CurrentDialogOnly())
     router.message.register(cmd_new, Command("new"))
     router.callback_query.register(on_cancel, Pick.filter(F.step == "cancel"))
     router.callback_query.register(on_source, NewSub.source, Pick.filter(F.step == "src"))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -30,26 +31,32 @@ class TelegramOutbox:
         self.bot = bot
         self.source_titles = source_titles
         self.pause = pause
+        self._next_send = 0.0
 
     async def _call(self, method: Callable[..., Awaitable[Any]], **kwargs: Any) -> None:
-        try:
-            for attempt in range(2):
-                try:
-                    await method(**kwargs)
-                    return
-                except TelegramRetryAfter as exc:
-                    if attempt:
-                        raise
-                    log.warning("Telegram flood limit, waiting %s s", exc.retry_after)
-                    await asyncio.sleep(exc.retry_after)
-                except TelegramForbiddenError as exc:
-                    raise ChatGone(str(exc)) from exc
-                except TelegramBadRequest as exc:
-                    if "chat not found" in str(exc).lower():
-                        raise ChatGone(str(exc)) from exc
+        for attempt in range(2):
+            # Wait BEFORE sending, not after: a shutdown that cancels this sleep
+            # then never lands between "sent" and "marked as delivered", which
+            # would resend the alert after the restart.
+            wait = self._next_send - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                await method(**kwargs)
+                return
+            except TelegramRetryAfter as exc:
+                if attempt:
                     raise
-        finally:
-            await asyncio.sleep(self.pause)
+                log.warning("Telegram flood limit, waiting %s s", exc.retry_after)
+                await asyncio.sleep(exc.retry_after)
+            except TelegramForbiddenError as exc:
+                raise ChatGone(str(exc)) from exc
+            except TelegramBadRequest as exc:
+                if "chat not found" in str(exc).lower():
+                    raise ChatGone(str(exc)) from exc
+                raise
+            finally:
+                self._next_send = time.monotonic() + self.pause
 
     async def alert(self, chat_id: int, listing: Listing, slots: list[Slot], sub_ids: list[int]) -> None:
         title = self.source_titles.get(listing.source, listing.source)

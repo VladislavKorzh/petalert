@@ -46,3 +46,10 @@ def test_settings_parse_types_and_defaults():
 def test_unknown_proxy_mode_is_rejected():
     with pytest.raises(ValueError):
         Settings.load({"PROXY_MODE": "sometimes"})
+
+
+def test_malformed_proxy_url_fails_without_echoing_the_secret():
+    with pytest.raises(ValueError) as exc:
+        Settings.load({"PROXY_URL": "user-abc:s3cret@gate.decodo.com:7000"})
+    assert "s3cret" not in str(exc.value)
+    assert Settings.load({"PROXY_URL": "http://u:p@gate.decodo.com:7000"}).proxy_url

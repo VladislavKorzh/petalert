@@ -17,8 +17,9 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.base import BaseSession
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText, SendMessage
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.types import CallbackQuery, Chat, InaccessibleMessage, Message, Update, User
 
 from petalert.bot import build_dispatcher
 from petalert.bot.dialog import Pick
@@ -36,12 +37,20 @@ class FakeSession(BaseSession):
     def __init__(self):
         super().__init__()
         self.calls: list[Any] = []
+        self.on_answer = None  # hook: runs while a callback answer is "in flight"
+        self.answers_expired = False
 
     async def close(self) -> None:
         pass
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
+        if isinstance(method, AnswerCallbackQuery):
+            if self.on_answer:
+                hook, self.on_answer = self.on_answer, None
+                await hook()
+            if self.answers_expired:
+                raise TelegramBadRequest(method, "Bad Request: query is too old and response timeout expired or query ID is invalid")
         if isinstance(method, (SendMessage, EditMessageText, EditMessageReplyMarkup)):
             return Message(message_id=100, date=datetime.now(), chat=CHAT, text=getattr(method, "text", None))
         return True
@@ -53,8 +62,11 @@ class FakeSession(BaseSession):
 class FakeSource:
     key = "ths"
     title = "TrustedHousesitters"
+    during_countries = None  # hook: runs while the "network" call is in flight
 
     async def countries(self, continent):
+        if self.during_countries:
+            await self.during_countries()
         return [Country("portugal", "Portugal", 30), Country("spain", "Spain", 20)]
 
     async def search(self, flt, *, max_pages):
@@ -75,7 +87,8 @@ class Harness:
         self.session = FakeSession()
         self.bot = Bot("42:TEST", session=self.session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.worker = FakeWorker()
-        self.dp = build_dispatcher(store, {"ths": FakeSource()}, self.worker, frozenset({USER}))
+        self.source = FakeSource()
+        self.dp = build_dispatcher(store, {"ths": self.source}, self.worker, frozenset({USER}))
         self.loop = asyncio.new_event_loop()
 
     def _feed(self, update: Update) -> list[Any]:
@@ -87,8 +100,11 @@ class Harness:
         msg = Message(message_id=next(_ids), date=datetime.now(), chat=CHAT, from_user=FROM, text=text)
         return self._feed(Update(update_id=next(_ids), message=msg))
 
-    def press(self, data) -> list[Any]:
-        bot_msg = Message(message_id=100, date=datetime.now(), chat=CHAT, text="…")
+    def press(self, data, *, message_id: int = 100, inaccessible: bool = False) -> list[Any]:
+        if inaccessible:  # what Telegram sends for buttons on messages older than 48 h
+            bot_msg = InaccessibleMessage(chat=CHAT, message_id=message_id, date=0)
+        else:
+            bot_msg = Message(message_id=message_id, date=datetime.now(), chat=CHAT, text="…")
         query = CallbackQuery(
             id=str(next(_ids)), from_user=FROM, chat_instance="ci", message=bot_msg, data=data.pack()
         )
@@ -201,3 +217,79 @@ def test_someone_elses_subscription_cannot_be_touched(h):
     other = h.store.add_subscription(999, "ths", Filter("europe"))
     assert answers(h.press(SubAction(action="delete", sub_id=other))) == ["Subscription not found"]
     assert h.store.subscription(other, 999) is not None
+
+
+STALE = "⌛ This button has expired. Start again with /new."
+
+
+def test_buttons_of_an_older_dialog_message_are_stale(h):
+    h.text("/new")
+    assert answers(h.press(Pick(step="cont", value="europe"), message_id=99)) == [STALE]
+
+
+def test_double_tap_on_save_creates_one_subscription(h):
+    h.text("/new")
+    h.press(Pick(step="cont", value="asia"))
+    h.press(Pick(step="ctry", value="*"))
+    h.press(Pick(step="dates", value="*"))
+    h.press(Pick(step="dur", value="*"))
+    h.press(Pick(step="pets", value="*"))
+    h.press(Pick(step="save"))
+    assert answers(h.press(Pick(step="save"))) == [STALE]
+    assert len(h.store.subscriptions(USER)) == 1
+
+
+def test_cancel_while_countries_load_is_respected(h):
+    h.text("/new")
+
+    async def cancel_meanwhile():
+        h.source.during_countries = None
+        msg = Message(message_id=7, date=datetime.now(), chat=CHAT, from_user=FROM, text="/cancel")
+        await h.dp.feed_update(h.bot, Update(update_id=999, message=msg))
+
+    h.source.during_countries = cancel_meanwhile
+    calls = h.press(Pick(step="cont", value="europe"))
+    assert not any("Step 2" in t for t in texts(calls))
+
+
+def test_forged_page_value_is_rejected_not_crashed(h):
+    h.text("/new")
+    h.press(Pick(step="cont", value="europe"))
+    assert answers(h.press(Pick(step="cpage", value="abc"))) == ["Unknown page"]
+    assert answers(h.press(Pick(step="dur", value="5"))) == [STALE]  # not at that step yet
+
+
+def test_resume_on_a_running_subscription_does_not_rebaseline(h):
+    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
+    h.store.set_status(sub_id, USER, "active")
+    assert answers(h.press(SubAction(action="resume", sub_id=sub_id))) == ["Already running"]
+    assert h.store.subscription(sub_id, USER).status == "active"
+    assert h.worker.wakes == 0
+
+
+def test_buttons_on_a_message_older_than_48h_still_work(h):
+    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
+    calls = h.press(SubAction(action="pause", sub_id=sub_id), inaccessible=True)
+    assert h.store.subscription(sub_id, USER).status == "paused"
+    assert any(isinstance(c, SendMessage) for c in calls)  # a fresh message instead of an edit
+
+
+def test_cancel_while_the_continent_tap_is_being_answered(h):
+    h.text("/new")
+
+    async def cancel():
+        msg = Message(message_id=8, date=datetime.now(), chat=CHAT, from_user=FROM, text="/cancel")
+        await h.dp.feed_update(h.bot, Update(update_id=998, message=msg))
+
+    h.session.on_answer = cancel
+    h.press(Pick(step="cont", value="europe"))  # must not raise KeyError
+    assert h.store.subscriptions(USER) == []
+
+
+def test_expired_callback_answer_does_not_abort_the_action(h):
+    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
+    h.store.set_status(sub_id, USER, "active")
+    h.session.answers_expired = True  # pressed while the bot was down
+    calls = h.press(SubAction(action="pause", sub_id=sub_id))
+    assert h.store.subscription(sub_id, USER).status == "paused"
+    assert any(isinstance(c, EditMessageText) and "paused" in c.text for c in calls)

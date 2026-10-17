@@ -7,14 +7,15 @@ message.
 
 from __future__ import annotations
 
+import re
 from datetime import date
-from html import escape
+from html import escape, unescape
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..models import CONTINENTS, Filter, Listing, Slot
 
-CAPTION_LIMIT = 1024  # photo caption; measured on the HTML, so with headroom
+CAPTION_LIMIT = 1024  # photo caption, in Telegram's units (see tg_len)
 TEXT_LIMIT = 4096
 TITLE_LIMIT = 200
 
@@ -24,6 +25,15 @@ PET_EMOJI = {
     "reptile": "🦎", "poultry": "🐔", "farm animal": "🐄", "small pet": "🐹",
 }
 _SMALL_WORDS = {"and", "of", "the"}
+
+
+_TAG = re.compile(r"<[^>]+>")
+
+
+def tg_len(html_text: str) -> int:
+    """Length as Telegram counts it: UTF-16 code units of the text after the
+    HTML entities are parsed (an emoji is 2, a tag is 0)."""
+    return len(unescape(_TAG.sub("", html_text)).encode("utf-16-le")) // 2
 
 
 def pet_label(name: str, count: int) -> str:
@@ -88,7 +98,7 @@ def render_alert(
 
     shown = len(blocks)
     text = build(shown)
-    while len(text) > CAPTION_LIMIT and shown > 1:
+    while tg_len(text) > CAPTION_LIMIT and shown > 1:
         shown -= 1
         text = build(shown)
     markup = InlineKeyboardMarkup(
@@ -115,7 +125,7 @@ def render_digest(items: list[tuple[Listing, list[Slot]]]) -> tuple[str, int]:
             f"     📅 {dates}"
         )
         blocks.append(block)
-        if len(text(999)) > TEXT_LIMIT:
+        if tg_len(text(999)) > TEXT_LIMIT:
             blocks.pop()
             break
     return text(len(blocks)), len(blocks)

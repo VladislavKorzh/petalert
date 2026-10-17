@@ -78,3 +78,22 @@ def test_flood_limit_waits_and_retries_once(monkeypatch):
     flood = lambda m: TelegramRetryAfter(m, "Too Many Requests", retry_after=3)
     (sent,) = alert({SendPhoto: [flood]})
     assert isinstance(sent, SendPhoto) and 3 in waited
+
+
+def test_throttle_waits_before_sending_not_after(monkeypatch):
+    waited = []
+
+    async def fake_sleep(seconds):
+        waited.append(seconds)
+
+    monkeypatch.setattr("petalert.bot.notify.asyncio.sleep", fake_sleep)
+    session = Session({})
+    outbox = TelegramOutbox(Bot("42:TEST", session=session), {"ths": "THS"}, pause=10)
+
+    async def two():
+        await outbox.text(1, "a")
+        assert waited == []  # nothing pending after a send: a cancel can't land between send and mark
+        await outbox.text(1, "b")
+
+    asyncio.run(two())
+    assert len(session.sent) == 2 and len(waited) == 1 and 9 < waited[0] <= 10

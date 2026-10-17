@@ -292,3 +292,131 @@ def test_excluded_country_never_alerts(env):
     ]
     env.tick()
     assert [a[1] for a in env.outbox.alerts] == ["pt"]
+
+
+def test_full_crawl_every_three_hours(env):
+    env.store.add_subscription(10, "ths", FLT)
+    env.tick()  # baseline
+    for _ in range(6):
+        env.advance(30)
+        env.tick()
+    assert env.source.calls == [None, 1, 1, 1, 1, 1, None]
+
+
+def test_expired_date_window_pauses_and_tells_once(env):
+    sub = env.store.add_subscription(10, "ths", Filter("europe", date_to=date(2026, 10, 17)))
+    env.tick()
+    assert env.store.subscription(sub, 10).status == "paused"
+    assert env.source.calls == []  # no request for a window that can't match
+    assert "has ended" in env.outbox.texts[-1][1]
+    env.advance()
+    env.tick()
+    assert len(env.outbox.texts) == 1
+
+
+def test_subscription_paused_while_the_tick_was_fetching_gets_nothing(env):
+    sub = env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("s"))]
+    real_search = env.source.search
+
+    async def search_then_pause(flt, *, max_pages):
+        result = await real_search(flt, max_pages=max_pages)
+        env.store.set_status(sub, 10, "paused")  # the user taps Pause mid-tick
+        return result
+
+    env.source.search = search_then_pause
+    env.tick()
+    assert env.outbox.alerts == []
+
+
+def test_failed_send_is_retried_without_forcing_full_crawls(env):
+    # A persistent failure (Telegram down for hours) must not turn every tick
+    # into a 20+ request full crawl.
+    env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    env.source.listings = [listing("1", slot("s"))]
+    env.outbox.fail_alerts = True
+    for _ in range(3):
+        env.advance()
+        env.tick()
+    assert env.source.calls[1:] == [1, 1, 1]
+    env.advance()
+    env.outbox.fail_alerts = False
+    env.tick()
+    assert [a[1] for a in env.outbox.alerts] == ["1"]
+
+
+def test_scheduled_full_crawls_are_capped_per_tick(env):
+    from petalert.scheduler import MAX_SCHEDULED_FULL
+
+    for country in ("a", "b", "c", "d", "e", "f"):
+        env.store.add_subscription(10, "ths", Filter("europe", country=country))
+    env.tick()  # six baselines: all full, no cap
+    assert env.source.calls == [None] * 6
+    env.now += timedelta(hours=3)
+    env.tick()
+    assert env.source.calls[6:].count(None) == MAX_SCHEDULED_FULL
+    env.advance()
+    env.tick()  # the remaining two get their turn
+    assert env.source.calls[12:].count(None) == 2
+
+
+def test_full_crawl_new_counts_only_what_page_one_could_not_see(env):
+    env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    env.source.listings = [listing(str(i), slot(f"s{i}")) for i in range(120)]
+    env.now += timedelta(hours=3)
+    stats = env.tick()
+    assert stats.fresh == 120 and stats.full_crawl_new == 20
+
+
+def test_failing_full_crawl_still_delivers_page_one_and_yields_its_slot(env):
+    env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    real = env.source.search
+
+    async def full_breaks(flt, *, max_pages):
+        if max_pages is None:
+            raise SourceError("THS ignores filters.published")
+        return await real(flt, max_pages=max_pages)
+
+    env.source.search = full_breaks
+    env.source.listings = [listing("1", slot("s"))]
+    env.now += timedelta(hours=3)
+    stats = env.tick()
+    assert stats.failed == 1 and [a[1] for a in env.outbox.alerts] == ["1"]
+
+
+def test_deferred_catch_up_is_not_lost(env):
+    from petalert.scheduler import MAX_SCHEDULED_FULL
+
+    for country in "abcdef":
+        env.store.add_subscription(10, "ths", Filter("europe", country=country))
+    env.tick()
+    env.now += timedelta(hours=2, minutes=30)  # downtime: everyone needs a catch-up
+    env.tick()
+    env.advance(1)  # well before the 3 h schedule would make them due again
+    env.tick()  # the two deferred groups still get their catch-up crawl
+    assert env.source.calls[6:].count(None) == 6
+
+
+def test_failing_full_crawl_never_finishes_a_baseline_on_page_one(env):
+    old = env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    new = env.store.add_subscription(20, "ths", FLT)  # same group, still baselining
+    real = env.source.search
+
+    async def full_breaks(flt, *, max_pages):
+        if max_pages is None:
+            raise SourceError("boom")
+        return await real(flt, max_pages=max_pages)
+
+    env.source.search = full_breaks
+    env.source.listings = [listing("1", slot("s"))]
+    env.advance()
+    env.tick()
+    assert [a[:2] for a in env.outbox.alerts] == [(10, "1")]  # the active one still hears about it
+    assert env.store.subscription(new, 20).status == "baselining"
+    assert env.store.subscription(old, 10).status == "active"

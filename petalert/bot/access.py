@@ -18,6 +18,7 @@ from aiogram.types import Message, TelegramObject, Update, User
 
 from ..db import CODE_LENGTH, Store, normalize_code
 from .manage import HELP
+from .ui import answer
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class AccessGate(BaseMiddleware):
         if event.message is not None:
             await self.reply(event.message, self.enter_code(event.message.text or "", user.id))
         elif event.callback_query is not None:
-            await event.callback_query.answer(INVITE_ONLY, show_alert=True)
+            await answer(event.callback_query, INVITE_ONLY, show_alert=True)
         return None
 
     def enter_code(self, text: str, user_id: int) -> str:

@@ -58,9 +58,11 @@ def test_pet_types_are_exactly_the_site_strings():
     )
 
 
-def test_page_and_facets():
-    q = build_query(Filter(continent="europe"), TODAY, 3, facets=("country",))
-    assert q["page"] == 3 and q["facets"] == ["country"]
+def test_keyset_cursor_and_facets():
+    q = build_query(Filter(continent="europe"), TODAY, published_before="2026-10-11T13:09:17", facets=("country",))
+    assert q["page"] == 1 and q["facets"] == ["country"]
+    assert q["filters"]["published"] == {"before": "2026-10-11T13:09:17"}
+    assert "published" not in build_query(Filter(continent="europe"), TODAY)["filters"]
 
 
 def test_exclusions_are_not_sent_to_the_api():

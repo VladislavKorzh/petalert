@@ -20,6 +20,7 @@ import json
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import date
 from typing import Any
 
@@ -40,19 +41,32 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
 PER_PAGE = 100
-# The API only returns the first 1000 search results; beyond that it's a 400
-# "Search results are limited to the first 1000 results" (verified 2026-10-17).
-# So a "full crawl" of a broad filter (all of Europe, ~2650) is the 1000 newest,
-# not everything.
-RESULT_LIMIT = 1000
-MAX_PAGES = RESULT_LIMIT // PER_PAGE
+# The API refuses to page past the first 1000 results ("Search results are
+# limited to the first 1000 results", verified 2026-10-17). So instead of page
+# numbers the crawl pages with a cursor: every request is page 1 of "published
+# before the last listing seen". The bound is inclusive, so consecutive pages
+# overlap by a listing and are deduped by id. There is no cap that way, and a
+# listing dropping out of the feed mid-crawl can't shift an unread one onto a
+# page that was already fetched.
+MAX_PAGES = 200  # runaway guard; all of Europe is ~27 pages
+RESULT_LIMIT = 1000  # how deep plain page numbers can go
+FAR_FUTURE = "2100-01-01T00:00:00"  # a cursor that keeps every dated listing
+# A filter this small is fetched completely on every tick, whatever max_pages
+# says: it costs at most a few requests and catches dates added to old listings
+# without a `published` bump (rare, but it happens).
+SMALL_TOTAL = 300
 _VERSION_RE = re.compile(r'"apiVersion":"([0-9]{4}-[0-9]{2}-[0-9]{2})"')
 
 Notice = Callable[[str], Awaitable[None]]
 
 
 def build_query(
-    flt: Filter, today: date, page: int = 1, *, facets: tuple[str, ...] = ()
+    flt: Filter,
+    today: date,
+    *,
+    published_before: str | None = None,
+    page: int = 1,
+    facets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     assignments: dict[str, Any] = {
         "confirmed": False,
@@ -78,6 +92,8 @@ def build_query(
     }
     if flt.pets:
         filters["pets"] = [{"type": pet} for pet in sorted(flt.pets)]
+    if published_before:
+        filters["published"] = {"before": published_before}  # inclusive
     return {
         "filters": filters,
         "facets": list(facets),
@@ -156,7 +172,11 @@ class TrustedHousesitters:
     async def _tell(self, text: str) -> None:
         log.warning(text)
         if self._notice:
-            await self._notice(text)
+            try:
+                await self._notice(text)
+            except Exception:
+                # A failed notification must never fail the request it reports on.
+                log.exception("THS: could not deliver the notice")
 
     async def _site_version(self) -> str | None:
         resp = await self.http.get(SEARCH_PAGE, headers={"User-Agent": USER_AGENT})
@@ -192,38 +212,127 @@ class TrustedHousesitters:
         except ValueError as exc:
             raise SourceError(f"THS returned non-JSON: {resp.text[:200]}") from exc
 
+    async def _page(
+        self,
+        flt: Filter,
+        today: date,
+        before: str | None,
+        seen: dict[str, Listing],
+        *,
+        refresh: bool = False,
+        page: int = 1,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Fetch one page into `seen`; returns the raw results and the total."""
+        data = await self._query(build_query(flt, today, published_before=before, page=page))
+        try:
+            results, total = data["results"], int(data["total"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SourceError(f"THS response shape changed: {str(data)[:200]}") from exc
+        parsed = 0
+        for raw in results:
+            try:
+                listing = parse_listing(raw)
+            except (KeyError, TypeError, ValueError) as exc:
+                log.warning("THS: could not parse listing %s: %r", raw.get("id"), exc)
+                continue
+            parsed += 1
+            if refresh:
+                seen[listing.id] = listing
+            else:
+                seen.setdefault(listing.id, listing)
+        if results and not parsed:
+            raise SourceError(f"THS listing shape changed: {str(results[0])[:200]}")
+        return results, total
+
     async def search(self, flt: Filter, *, max_pages: int | None) -> list[Listing]:
         today = self._clock()
         seen: dict[str, Listing] = {}
-        page = 1
+        dated: set[str] = set()  # ids seen with a `published` date
+        before: str | None = None
+        limit = max_pages
+        pages = 0
         while True:
-            data = await self._query(build_query(flt, today, page))
-            try:
-                results, total = data["results"], int(data["total"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise SourceError(f"THS response shape changed: {str(data)[:200]}") from exc
-            parsed = 0
-            for raw in results:
-                try:
-                    listing = parse_listing(raw)
-                except (KeyError, TypeError, ValueError) as exc:
-                    log.warning("THS: could not parse listing %s: %r", raw.get("id"), exc)
-                    continue
-                parsed += 1
-                # Between pages the feed shifts by freshly published listings —
-                # the same listing can arrive twice.
-                seen.setdefault(listing.id, listing)
-            if results and not parsed:
-                raise SourceError(f"THS listing shape changed: {str(results[0])[:200]}")
-            if len(results) < PER_PAGE or page * PER_PAGE >= total:
-                break
-            if max_pages is not None and page >= max_pages:
-                break
-            if page >= MAX_PAGES:
-                log.info("THS: API limit of %s out of %s results for %s", RESULT_LIMIT, total, flt.to_json())
-                break
-            page += 1
+            results, total = await self._page(flt, today, before, seen)
+            pages += 1
+            problem = None
+            if before is not None and any(
+                not r.get("published") or r["published"] > before for r in results
+            ):
+                # A cursor page may only hold listings at or below the cursor.
+                # Anything else means THS stopped honouring filters.published.
+                problem = "THS ignores filters.published; the cursor crawl can't be trusted"
+            dated.update(str(r["id"]) for r in results if r.get("published") and "id" in r)
+            if pages == 1:
+                first_total = total
+                if total <= SMALL_TOTAL:
+                    limit = None
+            cursor = results[-1].get("published") if results else None
+            if problem is None and len(results) == PER_PAGE and (limit is None or pages < limit):
+                if cursor and (cursor == before or pages >= MAX_PAGES):
+                    # 100+ listings in one second, or a runaway.
+                    problem = f"THS cursor crawl stuck at {cursor!r} after {pages} pages"
+            if problem:
+                if max_pages is None:
+                    # Never pass a partial crawl off as complete: a later one
+                    # would then alert everything this one missed.
+                    raise SourceError(problem)
+                log.warning("%s — keeping the first page for %s", problem, flt.to_json())
+                return list(seen.values())  # a page-1 tick is fine with that
+            if len(results) < PER_PAGE or (limit is not None and pages >= limit) or not cursor:
+                break  # (no cursor: the undated listings, which sort last, have begun)
+            before = cursor
+        if max_pages is None and pages > 1:
+            # A listing that got new dates mid-crawl jumped above the cursor; one
+            # more look at the top catches it. Whatever it adds is the newest, so
+            # it goes first (callers rely on newest-first order).
+            known = set(seen)
+            await self._page(flt, today, None, seen, refresh=True)
+            top = {i: l for i, l in seen.items() if i not in known}
+            seen = {**top, **{i: l for i, l in seen.items() if i not in top}}
+        if limit is None and first_total > PER_PAGE and first_total > len(dated):
+            # (≤ 100 results all came on page 1, undated ones included)
+            await self._undated(flt, today, seen, first_total, first_total - len(dated))
         return list(seen.values())
+
+    async def _country_counts(self, flt: Filter, today: date, before: str | None) -> dict[str, int]:
+        query = build_query(flt, today, published_before=before, facets=("country",))
+        query["resultsPerPage"] = 1
+        data = await self._query(query)
+        try:
+            return {c["slug"]: int(c["count"]) for c in data["facets"]["country"]}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SourceError(f"THS country facet shape changed: {str(data)[:200]}") from exc
+
+    async def _undated(
+        self, flt: Filter, today: date, seen: dict[str, Listing], total: int, missing: int
+    ) -> None:
+        """Listings without a `published` date never match a cursor; in the
+        plain feed they sort last. Plain page numbers only reach 1000 results,
+        so above that, find the countries holding them (country facet with vs
+        without a cursor) and read the tail of each of those, scoped to it."""
+        if total <= RESULT_LIMIT:
+            scopes = [(flt, total, missing)]
+        else:
+            plain = await self._country_counts(flt, today, None)
+            with_date = await self._country_counts(flt, today, FAR_FUTURE)
+            scopes = []
+            for slug, n in plain.items():
+                gap = n - with_date.get(slug, 0)
+                if gap <= 0 or slug in flt.exclude_countries:
+                    continue
+                if n > RESULT_LIMIT:
+                    log.info("THS: %d undated listings in %s are out of reach (%d results)", gap, slug, n)
+                    continue
+                scopes.append((replace(flt, country=slug, exclude_countries=()), n, gap))
+        for scope, n, gap in scopes:
+            # Start a little before where they should be (listings may have left
+            # the feed meanwhile) and go on while pages are full (or new ones arrived).
+            page = max(1, (n - gap - 10) // PER_PAGE + 1)
+            while True:
+                results, now_total = await self._page(scope, today, None, seen, page=page)
+                if len(results) < PER_PAGE or page * PER_PAGE >= min(max(n, now_total), RESULT_LIMIT):
+                    break
+                page += 1
 
     async def countries(self, continent: str) -> list[Country]:
         query = build_query(Filter(continent=continent), self._clock(), facets=("country",))

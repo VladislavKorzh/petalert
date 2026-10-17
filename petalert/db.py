@@ -24,6 +24,19 @@ from .models import Filter
 
 Status = Literal["baselining", "active", "paused"]
 
+# AUTOINCREMENT: ids are never reused. Otherwise a stale /list button or an
+# in-flight tick holding the id of a deleted subscription would act on a newer
+# one that got the same id (plain INTEGER PRIMARY KEY reuses the max id).
+SUBSCRIPTION_TABLE = """
+CREATE TABLE IF NOT EXISTS {name} (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     INTEGER NOT NULL,
+    source      TEXT NOT NULL,
+    filter_json TEXT NOT NULL,             -- Filter.to_json(); (source, filter_json) is the group key
+    status      TEXT NOT NULL CHECK (status IN ('baselining', 'active', 'paused')),
+    created_at  TEXT NOT NULL
+);"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS access_code (
     code       TEXT PRIMARY KEY,           -- normalized: no dash, upper case
@@ -38,14 +51,7 @@ CREATE TABLE IF NOT EXISTS user (
     joined_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS subscription (
-    id          INTEGER PRIMARY KEY,
-    chat_id     INTEGER NOT NULL,
-    source      TEXT NOT NULL,
-    filter_json TEXT NOT NULL,             -- Filter.to_json(); (source, filter_json) is the group key
-    status      TEXT NOT NULL CHECK (status IN ('baselining', 'active', 'paused')),
-    created_at  TEXT NOT NULL
-);
+{subscription}
 CREATE INDEX IF NOT EXISTS subscription_chat ON subscription(chat_id);
 
 -- Slots a subscription already knows about: sent, or seen during baseline.
@@ -94,10 +100,11 @@ class Subscription:
     source: str
     filter: Filter
     status: Status
+    filter_json: str  # as stored; with id and chat_id it identifies this exact subscription
 
     @property
     def group(self) -> tuple[str, str]:
-        return self.source, self.filter.to_json()
+        return self.source, self.filter_json
 
 
 def _sub(row: sqlite3.Row) -> Subscription:
@@ -107,6 +114,7 @@ def _sub(row: sqlite3.Row) -> Subscription:
         source=row["source"],
         filter=Filter.from_json(row["filter_json"]),
         status=row["status"],
+        filter_json=row["filter_json"],
     )
 
 
@@ -122,7 +130,33 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.executescript(SCHEMA)
+        self.conn.executescript(SCHEMA.format(subscription=SUBSCRIPTION_TABLE.format(name="subscription")))
+        self._migrate_autoincrement()
+
+    def _migrate_autoincrement(self) -> None:
+        """Databases created before AUTOINCREMENT get the table rebuilt once
+        (SQLite can't alter a primary key). Foreign keys are off meanwhile, or
+        dropping the old table would cascade-delete every `delivered` row."""
+        sql = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'subscription'"
+        ).fetchone()[0]
+        if "AUTOINCREMENT" in sql.upper():
+            return
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            with self.tx() as conn:
+                conn.execute(SUBSCRIPTION_TABLE.format(name="subscription_new"))
+                conn.execute(
+                    "INSERT INTO subscription_new (id, chat_id, source, filter_json, status, created_at)"
+                    " SELECT id, chat_id, source, filter_json, status, created_at FROM subscription"
+                )
+                conn.execute("DROP TABLE subscription")
+                conn.execute("ALTER TABLE subscription_new RENAME TO subscription")
+                conn.execute("CREATE INDEX IF NOT EXISTS subscription_chat ON subscription(chat_id)")
+                if conn.execute("PRAGMA foreign_key_check").fetchall():
+                    raise RuntimeError("subscription migration broke foreign keys")
+        finally:
+            self.conn.execute("PRAGMA foreign_keys=ON")
 
     def close(self) -> None:
         self.conn.close()
@@ -165,6 +199,18 @@ class Store:
         )
         return [_sub(r) for r in rows]
 
+    def transition(
+        self, sub_id: int, chat_id: int, status: Status, *, allowed_from: tuple[Status, ...]
+    ) -> bool:
+        """Change status only from the given states: a stale or double-tapped
+        button (Resume on an already active subscription) must not re-baseline it."""
+        marks = ",".join("?" * len(allowed_from))
+        cur = self.conn.execute(
+            f"UPDATE subscription SET status = ? WHERE id = ? AND chat_id = ? AND status IN ({marks})",
+            (status, sub_id, chat_id, *allowed_from),
+        )
+        return cur.rowcount == 1
+
     def set_status(self, sub_id: int, chat_id: int, status: Status) -> bool:
         cur = self.conn.execute(
             "UPDATE subscription SET status = ? WHERE id = ? AND chat_id = ?",
@@ -185,22 +231,36 @@ class Store:
         )
         return cur.rowcount
 
-    def finish_baseline(self, sub_id: int, items: Iterable[tuple[str, date]]) -> bool:
+    def finish_baseline(self, sub: Subscription, items: Iterable[tuple[str, date]]) -> bool:
         """Mark everything seen and switch to active — atomically.
 
-        Only if the subscription is still `baselining`: during the full crawl
-        (a minute or two) it may have been deleted or paused, and then the
-        result belongs to nobody.
+        Only if that exact subscription is still `baselining`: during the full
+        crawl (a minute or two) it may have been deleted or paused, and then the
+        result belongs to nobody. The chat and filter are checked too, because
+        SQLite reuses the id of a deleted last row — a new subscription saved
+        in the meantime must not inherit someone else's baseline.
         """
         with self.tx() as conn:
             cur = conn.execute(
-                "UPDATE subscription SET status = 'active' WHERE id = ? AND status = 'baselining'",
-                (sub_id,),
+                "UPDATE subscription SET status = 'active'"
+                " WHERE id = ? AND chat_id = ? AND filter_json = ? AND status = 'baselining'",
+                (sub.id, sub.chat_id, sub.filter_json),
             )
             if cur.rowcount != 1:
                 return False
-            self._insert_delivered(conn, sub_id, items)
+            self._insert_delivered(conn, sub, items)
         return True
+
+    def still_active(self, subs: Iterable[Subscription]) -> set[int]:
+        """Ids of those subscriptions that are, right now, the same and active.
+
+        A tick awaits the network for a while; meanwhile a user can pause or
+        delete a subscription (and its id can be reused)."""
+        wanted = {(s.id, s.chat_id, s.filter_json) for s in subs}
+        rows = self.conn.execute(
+            "SELECT id, chat_id, filter_json FROM subscription WHERE status = 'active'"
+        )
+        return {r[0] for r in rows if (r[0], r[1], r[2]) in wanted}
 
     # --- dedup ----------------------------------------------------------------
 
@@ -208,20 +268,24 @@ class Store:
         rows = self.conn.execute("SELECT slot_key FROM delivered WHERE sub_id = ?", (sub_id,))
         return {r[0] for r in rows}
 
-    def mark_delivered(self, sub_id: int, items: Iterable[tuple[str, date]]) -> None:
+    def mark_delivered(self, sub: Subscription, items: Iterable[tuple[str, date]]) -> None:
         with self.tx() as conn:
-            self._insert_delivered(conn, sub_id, items)
+            self._insert_delivered(conn, sub, items)
 
     @staticmethod
-    def _insert_delivered(conn: sqlite3.Connection, sub_id: int, items) -> None:
+    def _insert_delivered(conn: sqlite3.Connection, sub: Subscription, items) -> None:
         now = utcnow().isoformat()
         # WHERE EXISTS: the subscription may have been deleted while the message
-        # was in flight — then silently do nothing instead of a foreign-key
-        # IntegrityError.
+        # was in flight (or its id reused by a new one) — then silently do
+        # nothing instead of a foreign-key IntegrityError or a wrong owner.
         conn.executemany(
             "INSERT OR IGNORE INTO delivered (sub_id, slot_key, end_date, at)"
-            " SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM subscription WHERE id = ?)",
-            [(sub_id, key, end.isoformat(), now, sub_id) for key, end in items],
+            " SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM subscription"
+            " WHERE id = ? AND chat_id = ? AND filter_json = ?)",
+            [
+                (sub.id, key, end.isoformat(), now, sub.id, sub.chat_id, sub.filter_json)
+                for key, end in items
+            ],
         )
 
     # --- query state ----------------------------------------------------------

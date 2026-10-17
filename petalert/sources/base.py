@@ -1,8 +1,9 @@
 """The contract for a source site.
 
-A new site = one module in `sources/` implementing `Source`, plus a line in
-`REGISTRY`. Everything else (dialog, worker, dedup, alerts) works with the
-normalized `Listing`/`Slot` and knows nothing about the specific site.
+A new site = one module in `sources/` implementing `Source`, plus a factory
+line in `REGISTRY` (sources/__init__.py). Everything else (dialog, worker,
+dedup, alerts) works with the normalized `Listing`/`Slot` and knows nothing
+about the specific site.
 """
 
 from __future__ import annotations
@@ -25,5 +26,10 @@ class Source(Protocol):
         ...
 
     async def search(self, flt: Filter, *, max_pages: int | None) -> list[Listing]:
-        """Listings matching the filter, newest first. `None` means all pages."""
+        """Listings matching the filter, newest first.
+
+        `max_pages=None` means everything (no cap). Otherwise it's a lower bound
+        on effort: at least the newest `max_pages` pages, and a source may
+        return more when fetching everything is cheap.
+        """
         ...

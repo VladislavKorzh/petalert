@@ -12,6 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from ..db import Store, Subscription
 from ..scheduler import Worker
 from .format import describe_filter
+from .ui import STALE, answer, chat_id, edit
 
 HELP = (
     "🐾 <b>House-sit alerts</b>\n"
@@ -80,29 +81,39 @@ async def cmd_list(message: Message, state: FSMContext, store: Store, sources) -
 async def on_sub_action(
     query: CallbackQuery, callback_data: SubAction, store: Store, worker: Worker, sources
 ) -> None:
-    chat_id = query.message.chat.id
+    chat = chat_id(query)
     sub_id = callback_data.sub_id
     if callback_data.action == "delete":
-        if store.delete(sub_id, chat_id):
-            await query.message.edit_text(f"🗑 Subscription #{sub_id} deleted.")
-            await query.answer("Deleted")
-        else:
-            await query.answer("Subscription not found", show_alert=True)
+        if not store.delete(sub_id, chat):
+            await answer(query, "Subscription not found", show_alert=True)
+            return
+        await answer(query, "Deleted")
+        await edit(query, f"🗑 Subscription #{sub_id} deleted.")
         return
-    # Resume = baseline again: whatever appeared while paused is not sent.
-    status = "paused" if callback_data.action == "pause" else "baselining"
-    if not store.set_status(sub_id, chat_id, status):
-        await query.answer("Subscription not found", show_alert=True)
+    if callback_data.action == "pause":
+        changed = store.transition(sub_id, chat, "paused", allowed_from=("active", "baselining"))
+        toast = "Paused" if changed else "Already paused"
+    elif callback_data.action == "resume":
+        # Resume = baseline again: whatever appeared while paused is not sent.
+        # Only from paused: a stale Resume on a running subscription would
+        # otherwise silently swallow its undelivered new dates.
+        changed = store.transition(sub_id, chat, "baselining", allowed_from=("paused",))
+        toast = "Resumed" if changed else "Already running"
+        if changed:
+            worker.wake()
+    else:
+        await answer(query, "Unknown action", show_alert=True)
         return
-    if status == "baselining":
-        worker.wake()
-    sub = store.subscription(sub_id, chat_id)
-    await query.message.edit_text(sub_text(sub, _titles(sources)), reply_markup=sub_keyboard(sub))
-    await query.answer("Paused" if status == "paused" else "Resumed")
+    sub = store.subscription(sub_id, chat)
+    if sub is None:
+        await answer(query, "Subscription not found", show_alert=True)
+        return
+    await answer(query, toast)
+    await edit(query, sub_text(sub, _titles(sources)), sub_keyboard(sub))
 
 
 async def stale_button(query: CallbackQuery) -> None:
-    await query.answer("⌛ This button has expired. Start again with /new.", show_alert=True)
+    await answer(query, STALE, show_alert=True)
 
 
 async def unknown_text(message: Message, state: FSMContext) -> None:

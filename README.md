@@ -24,7 +24,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
              SQLite ⇄ Worker (asyncio, ~30 min ± 10%) → sources["ths"].search()
                          · identical filters share one request
                          · new subscription baseline: everything current is silently "seen"
-                         · page 1 every tick, full crawl daily / after downtime
+                         · page 1 every tick (the whole filter if ≤ 300 results),
+                           full crawl every 3 h / after downtime
                          · dedup by date-slot id, marked only after a successful send
 ```
 
@@ -58,14 +59,19 @@ uv run python -m petalert codes generate 5   # codes + deep links t.me/<bot>?sta
 POLL_INTERVAL_MIN=1 uv run python -m petalert
 ```
 
+Use a **separate dev bot token** locally: two processes polling the same token
+fight over updates (`TelegramConflictError`), and both would send alerts.
 You can find your `user_id` via @userinfobot. Admins listed in
 `ADMIN_USER_IDS` get in without a code.
 
 ## Invite codes
 
+Codes live in the database of the bot that will check them, so generate them
+where that bot runs — on the server for production:
+
 ```bash
-uv run python -m petalert codes generate 100   # a pack for 100 people
-uv run python -m petalert codes list           # still unused
+ssh $HOST 'cd /srv/petalert && sudo -u petalert .venv/bin/python -m petalert codes generate 100'
+ssh $HOST 'cd /srv/petalert && sudo -u petalert .venv/bin/python -m petalert codes list'   # still unused
 ```
 
 A code is single-use: it grants one Telegram account access for good. The
@@ -83,8 +89,13 @@ person either opens the deep link or sends the code to the bot as text
 
 **THS blocks datacenter IPs** (from DigitalOcean every page returns 403 from an
 AWS WAF), so on a VPS you need `PROXY_URL` (a residential rotating proxy) and
-`PROXY_MODE=always`. Traffic is ~32 KB (gzip) per page of 100 listings, i.e.
-~2 MB per day per filter.
+`PROXY_MODE=always`. Traffic is ~110–120 KB (gzip) per page of 100 listings, per
+distinct filter: ~6 MB/day for the page-1 ticks, plus a full crawl every
+`FULL_CRAWL_HOURS` (3) of about `results / 100` pages. Excluded countries are
+dropped locally, so they still count: "Europe except the UK" fetches all
+~2100 European results, ~22 pages ≈ 2.5 MB per crawl, ~25 MB/day ≈ 0.75 GB/month
+in total. A single country is usually one request. Subscriptions with the same
+filter share the requests; at most 4 scheduled full crawls run per tick.
 
 First deployment (on the server, as a sudo user — `deploy` here):
 
@@ -94,7 +105,7 @@ sudo install -d -o petalert -g petalert -m 750 /var/lib/petalert
 sudo install -d -o deploy -g deploy /srv/petalert
 git clone https://github.com/VladislavKorzh/petalert.git /srv/petalert
 cd /srv/petalert && uv sync --frozen --no-dev --python /usr/bin/python3.12
-cp .env.example .env && chgrp petalert .env && chmod 640 .env   # fill in; DB_PATH=/var/lib/petalert/petalert.sqlite3
+sudo install -m 640 -o deploy -g petalert .env.example .env   # then fill in; DB_PATH=/var/lib/petalert/petalert.sqlite3
 sudo -u petalert .venv/bin/python -m petalert codes generate 100 > ~/petalert-codes.txt
 sudo cp deploy/petalert.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now petalert
@@ -107,6 +118,18 @@ Updating (`HOST` is the server's ssh alias):
 ssh $HOST 'cd /srv/petalert && git pull --ff-only \
   && uv sync --frozen --no-dev --python /usr/bin/python3.12 \
   && sudo systemctl restart petalert'
+```
+
+**Upgrading from the 1000-result crawl** (one time, before the cursor crawl
+first runs): the old crawl never saw listings beyond the 1000 newest, so the
+new one would alert all of them as new. Stop the bot, update, mark those as
+seen, then start — chained with `&&` so a failed step never starts the bot:
+
+```bash
+ssh $HOST 'cd /srv/petalert && sudo systemctl stop petalert && git pull --ff-only \
+  && uv sync --frozen --no-dev --python /usr/bin/python3.12 \
+  && sudo -u petalert .venv/bin/python -m petalert rebaseline \
+  && sudo systemctl start petalert'
 ```
 
 If `deploy/petalert.service` changed, also `sudo cp` it into
@@ -124,9 +147,24 @@ Each tick logs `groups`, `full`, `listings`, `fresh`, `sent`, `failed`,
 - **401** from THS means the Referer/auth requirements changed — the code needs
   a fix.
 - **A user blocked the bot** → their subscriptions are paused.
-- **THS limit: 1000 results per search.** For a broad filter (all of Europe,
-  ~2650) the baseline and the daily crawl see the 1000 newest. An older listing
-  triggers an alert only once it's re-published and moves to the top.
-- **Assumption:** new dates bump a listing to the top of the feed (`published`).
-  The daily full crawl is a safety net, and `full_crawl_new` in the log shows
-  whether it ever finds anything.
+- **A subscription's date window is over** → it is paused and the user is told.
+- **THS refuses to page past 1000 results**, so full crawls page with a cursor
+  (`published.before` the last listing seen) instead of page numbers: no cap,
+  and listings leaving the feed mid-crawl don't hide others.
+- **New dates without a bump.** New listings and most new dates appear at the
+  top of the `published` feed, which every tick reads. But owners sometimes add
+  dates to an old listing without bumping it (~0.5% of new slots, measured
+  2026-10-17); those are found by the full crawl, so they arrive up to
+  `FULL_CRAWL_HOURS` late (immediately for filters with ≤ 300 results, which are
+  fetched whole every tick). `full_crawl_new` in the log counts new slots a
+  full crawl found beyond page 1 — a steady 0 means a longer interval is fine.
+- **If THS stops honouring the cursor** (`filters.published`), full crawls fail
+  loudly (admin alert after 3 ticks) instead of quietly returning page 1.
+- **Listings with no `published` date** (roughly 1 in 1000) sort after everything
+  and can't be reached by the cursor. The full crawl reads them from the last
+  plain pages (above 1000 results: per country, found by comparing the country
+  facet with and without a cursor); only undated listings in a single country
+  with more than 1000 results (e.g. the UK) stay out of reach.
+- **Database backups** are not part of this repo. A consistent copy, safe while
+  the bot runs (put it in a daily timer, or enable server snapshots):
+  `sudo -u petalert /srv/petalert/.venv/bin/python -c "import sqlite3; sqlite3.connect('/var/lib/petalert/petalert.sqlite3').backup(sqlite3.connect('/var/lib/petalert/backup.sqlite3'))"`
