@@ -1,0 +1,29 @@
+[project]
+name = "petalert"
+version = "0.1.0"
+description = "Telegram-бот: алерти про нові house-sits (TrustedHousesitters, далі інші сайти)"
+requires-python = ">=3.12"
+dependencies = [
+    # 3.31 — актуальна на старті проєкту; стеля на мажорі, бо 2→3 вже
+    # перейменовувала класи й атрибути винятків (RetryAfter.timeout →
+    # TelegramRetryAfter.retry_after), і таке ламається лише під флуд-лімітом.
+    "aiogram>=3.31,<4",
+    # Клієнт для сайтів-джерел. aiohttp і так приходить з aiogram, але httpx
+    # дає MockTransport для тестів і простий `proxy=` (0.28 прибрала `proxies=`,
+    # тому нижня межа саме 0.28).
+    "httpx>=0.28,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["petalert"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

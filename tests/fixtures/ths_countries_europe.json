@@ -1,0 +1,158 @@
+{
+ "results": [],
+ "total": 2647,
+ "facets": {
+  "country": [
+   {
+    "count": 2154,
+    "name": "United Kingdom",
+    "slug": "united-kingdom"
+   },
+   {
+    "count": 113,
+    "name": "Ireland",
+    "slug": "ireland"
+   },
+   {
+    "count": 99,
+    "name": "France",
+    "slug": "france"
+   },
+   {
+    "count": 80,
+    "name": "Germany",
+    "slug": "germany"
+   },
+   {
+    "count": 34,
+    "name": "Spain",
+    "slug": "spain"
+   },
+   {
+    "count": 32,
+    "name": "Switzerland",
+    "slug": "switzerland"
+   },
+   {
+    "count": 30,
+    "name": "Portugal",
+    "slug": "portugal"
+   },
+   {
+    "count": 13,
+    "name": "Italy",
+    "slug": "italy"
+   },
+   {
+    "count": 12,
+    "name": "Belgium",
+    "slug": "belgium"
+   },
+   {
+    "count": 12,
+    "name": "Sweden",
+    "slug": "sweden"
+   },
+   {
+    "count": 11,
+    "name": "Netherlands",
+    "slug": "netherlands"
+   },
+   {
+    "count": 9,
+    "name": "Jersey",
+    "slug": "jersey"
+   },
+   {
+    "count": 5,
+    "name": "Austria",
+    "slug": "austria"
+   },
+   {
+    "count": 5,
+    "name": "Denmark",
+    "slug": "denmark"
+   },
+   {
+    "count": 4,
+    "name": "Croatia",
+    "slug": "croatia"
+   },
+   {
+    "count": 4,
+    "name": "Isle of Man",
+    "slug": "isle-of-man"
+   },
+   {
+    "count": 4,
+    "name": "Luxembourg",
+    "slug": "luxembourg"
+   },
+   {
+    "count": 4,
+    "name": "Romania",
+    "slug": "romania"
+   },
+   {
+    "count": 3,
+    "name": "Finland",
+    "slug": "finland"
+   },
+   {
+    "count": 3,
+    "name": "Norway",
+    "slug": "norway"
+   },
+   {
+    "count": 3,
+    "name": "Poland",
+    "slug": "poland"
+   },
+   {
+    "count": 2,
+    "name": "Czech Republic",
+    "slug": "czech-republic"
+   },
+   {
+    "count": 2,
+    "name": "Greece",
+    "slug": "greece"
+   },
+   {
+    "count": 2,
+    "name": "Guernsey",
+    "slug": "guernsey"
+   },
+   {
+    "count": 2,
+    "name": "Slovenia",
+    "slug": "slovenia"
+   },
+   {
+    "count": 1,
+    "name": "Bulgaria",
+    "slug": "bulgaria"
+   },
+   {
+    "count": 1,
+    "name": "Cyprus",
+    "slug": "cyprus"
+   },
+   {
+    "count": 1,
+    "name": "Estonia",
+    "slug": "estonia"
+   },
+   {
+    "count": 1,
+    "name": "Gibraltar",
+    "slug": "gibraltar"
+   },
+   {
+    "count": 1,
+    "name": "Lithuania",
+    "slug": "lithuania"
+   }
+  ]
+ }
+}

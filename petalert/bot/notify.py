@@ -1,0 +1,80 @@
+"""Відправка в Telegram для воркера: тротлінг і переклад помилок Telegram.
+
+Одне повідомлення на секунду на весь процес — із запасом і для ліміту 1/с на
+чат, і для 30/с глобально; при нашому обсязі (десятки алертів за тік) це
+нічого не коштує.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.types import LinkPreviewOptions
+
+from ..models import Listing, Slot
+from ..scheduler import ChatGone
+from .format import render_alert, render_digest
+
+log = logging.getLogger(__name__)
+
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+
+
+class TelegramOutbox:
+    def __init__(self, bot: Bot, source_titles: dict[str, str], *, pause: float = 1.0):
+        self.bot = bot
+        self.source_titles = source_titles
+        self.pause = pause
+
+    async def _call(self, method: Callable[..., Awaitable[Any]], **kwargs: Any) -> None:
+        try:
+            for attempt in range(2):
+                try:
+                    await method(**kwargs)
+                    return
+                except TelegramRetryAfter as exc:
+                    if attempt:
+                        raise
+                    log.warning("Telegram flood limit, чекаю %s с", exc.retry_after)
+                    await asyncio.sleep(exc.retry_after)
+                except TelegramForbiddenError as exc:
+                    raise ChatGone(str(exc)) from exc
+                except TelegramBadRequest as exc:
+                    if "chat not found" in str(exc).lower():
+                        raise ChatGone(str(exc)) from exc
+                    raise
+        finally:
+            await asyncio.sleep(self.pause)
+
+    async def alert(self, chat_id: int, listing: Listing, slots: list[Slot], sub_ids: list[int]) -> None:
+        title = self.source_titles.get(listing.source, listing.source)
+        text, markup = render_alert(listing, slots, sub_ids, title)
+        if listing.photo_url:
+            try:
+                await self._call(
+                    self.bot.send_photo, chat_id=chat_id, photo=listing.photo_url,
+                    caption=text, reply_markup=markup,
+                )
+                return
+            except TelegramBadRequest as exc:
+                # Telegram не зміг забрати фото за URL — текст важливіший за картинку.
+                log.info("фото %s не пішло (%s), шлю текстом", listing.photo_url, exc)
+        await self._call(
+            self.bot.send_message, chat_id=chat_id, text=text, reply_markup=markup,
+            link_preview_options=NO_PREVIEW,
+        )
+
+    async def digest(self, chat_id: int, items: list[tuple[Listing, list[Slot]]]) -> int:
+        text, included = render_digest(items)
+        await self._call(
+            self.bot.send_message, chat_id=chat_id, text=text, link_preview_options=NO_PREVIEW,
+        )
+        return included
+
+    async def text(self, chat_id: int, text: str) -> None:
+        await self._call(self.bot.send_message, chat_id=chat_id, text=text)

@@ -1,0 +1,512 @@
+{
+ "results": [
+  {
+   "id": "3146164",
+   "location": {
+    "name": "Vilamoura",
+    "slug": "vilamoura",
+    "admin1Name": "Faro",
+    "admin1Code": "09",
+    "admin1Slug": "faro",
+    "admin2Code": "0808",
+    "admin2Name": "Loule",
+    "admin2Slug": "loule",
+    "countryName": "Portugal",
+    "countryCode": "pt",
+    "countrySlug": "portugal",
+    "countryIso3Code": "prt",
+    "continent": "continentcode",
+    "continentName": "EU",
+    "continentSlug": "europe",
+    "coordinates": {
+     "lat": 37.081,
+     "lon": -8.11083
+    }
+   },
+   "animals": [
+    {
+     "name": "dog",
+     "slug": "dogs",
+     "count": 1
+    }
+   ],
+   "title": "Our modern villa is only one year old and features an infinity pool.",
+   "photos": [
+    {
+     "id": "17333953",
+     "publicId": "remote_media/media/photo/12/b22fd792db4c67ac6cc7351462162c",
+     "width": 1152,
+     "height": 2048,
+     "blurhash": "c997X}5YxC~UIpoL8_i^SO9~xtNGAK?FM{",
+     "coverPhoto": true
+    },
+    {
+     "id": "17333945",
+     "publicId": "remote_media/media/photo/63/781ff0b655463386f868567f6da020",
+     "width": 2268,
+     "height": 4032,
+     "blurhash": "cQFr-HslIpnMRPNI?^M{jEx^s:xZ9bjExY",
+     "coverPhoto": false
+    },
+    {
+     "id": "17333946",
+     "publicId": "remote_media/media/photo/7f/acae4b75fd459d97fbea0b70139223",
+     "width": 3024,
+     "height": 4032,
+     "blurhash": "cC9G%8%LI]~ot6WsRlNHt69bR.$~9aogn}",
+     "coverPhoto": false
+    }
+   ],
+   "assignments": [
+    {
+     "id": "2122822",
+     "startDate": "2026-10-18",
+     "endDate": "2026-10-21",
+     "numberOfApplicants": 1,
+     "isReviewing": false,
+     "isConfirmed": true
+    },
+    {
+     "id": "2122825",
+     "startDate": "2026-10-26",
+     "endDate": "2026-10-31",
+     "numberOfApplicants": 3,
+     "isReviewing": false,
+     "isConfirmed": false
+    }
+   ],
+   "published": "2026-10-17T16:20:00",
+   "minutesPetCanBeLeftAlone": null,
+   "petsWelcome": null,
+   "guestsWelcome": null,
+   "feedbackAverageScore": 0.0
+  },
+  {
+   "id": "2214923",
+   "location": {
+    "name": "Espiche",
+    "slug": "espiche",
+    "admin1Name": "Faro",
+    "admin1Code": "09",
+    "admin1Slug": "faro",
+    "admin2Code": "0807",
+    "admin2Name": "Lagos",
+    "admin2Slug": "lagos",
+    "countryName": "Portugal",
+    "countryCode": "pt",
+    "countrySlug": "portugal",
+    "countryIso3Code": "prt",
+    "continent": "continentcode",
+    "continentName": "EU",
+    "continentSlug": "europe",
+    "coordinates": {
+     "lat": 37.10189,
+     "lon": -8.73795
+    }
+   },
+   "animals": [
+    {
+     "name": "dog",
+     "slug": "dogs",
+     "count": 1
+    }
+   ],
+   "title": "A 9 year old Golden Retriever with a 3 bed modern home in the Lagos/Luz area",
+   "photos": [
+    {
+     "id": "14530514",
+     "publicId": "remote_media/media/photo/e9/18410055354171a9fbb0657cb4978e.jpeg",
+     "width": 5712,
+     "height": 4284,
+     "blurhash": null,
+     "description": "Outside terrace and pool",
+     "coverPhoto": true
+    },
+    {
+     "id": "14530515",
+     "publicId": "remote_media/media/photo/4b/11a2549b4445299a7503c8cd036770.jpeg",
+     "width": 5712,
+     "height": 4284,
+     "blurhash": null,
+     "description": "Outside space",
+     "coverPhoto": false
+    },
+    {
+     "id": "14530517",
+     "publicId": "remote_media/media/photo/2d/70c8dd2b1040a0892367a6657f92eb.jpeg",
+     "width": 5712,
+     "height": 4284,
+     "blurhash": null,
+     "description": "Front of house and private parking",
+     "coverPhoto": false
+    }
+   ],
+   "assignments": [
+    {
+     "id": "2131528",
+     "startDate": "2026-12-09",
+     "endDate": "2027-01-09",
+     "numberOfApplicants": 4,
+     "isReviewing": false,
+     "isConfirmed": false
+    }
+   ],
+   "published": "2026-10-17T14:36:04",
+   "minutesPetCanBeLeftAlone": null,
+   "petsWelcome": null,
+   "guestsWelcome": null,
+   "feedbackAverageScore": 0.0
+  },
+  {
+   "id": "2117522",
+   "location": {
+    "name": "Tavira",
+    "slug": "tavira",
+    "admin1Name": "Faro",
+    "admin1Code": "09",
+    "admin1Slug": "faro",
+    "admin2Code": "0814",
+    "admin2Name": "Tavira",
+    "admin2Slug": "tavira",
+    "countryName": "Portugal",
+    "countryCode": "pt",
+    "countrySlug": "portugal",
+    "countryIso3Code": "prt",
+    "continent": "continentcode",
+    "continentName": "EU",
+    "continentSlug": "europe",
+    "coordinates": {
+     "lat": 37.12734,
+     "lon": -7.64861
+    }
+   },
+   "animals": [
+    {
+     "name": "cat",
+     "slug": "cats",
+     "count": 2
+    }
+   ],
+   "title": "Purrfect Algarve Escape\nRelax with Algarve style, ocean views, and happy meows",
+   "photos": [
+    {
+     "id": "13207055",
+     "publicId": "remote_media/media/photo/d8/c221fe48d44fa68caa0a0ba7ea5e33.jpeg",
+     "width": 4032,
+     "height": 3024,
+     "blurhash": null,
+     "coverPhoto": true
+    },
+    {
+     "id": "13207049",
+     "publicId": "remote_media/media/photo/c3/2ea7fbaa22441c9cbc9b7c2bdd3e59.jpeg",
+     "width": 3024,
+     "height": 4032,
+     "blurhash": null,
+     "coverPhoto": false
+    },
+    {
+     "id": "13207056",
+     "publicId": "remote_media/media/photo/74/ec35d2b35047c88ae97a45a7829151.jpeg",
+     "width": 3024,
+     "height": 4032,
+     "blurhash": null,
+     "coverPhoto": false
+    }
+   ],
+   "assignments": [
+    {
+     "id": "2131515",
+     "startDate": "2026-12-17",
+     "endDate": "2026-12-22",
+     "numberOfApplicants": 3,
+     "isReviewing": false,
+     "isConfirmed": false
+    }
+   ],
+   "published": "2026-10-17T14:18:20",
+   "minutesPetCanBeLeftAlone": null,
+   "petsWelcome": null,
+   "guestsWelcome": null,
+   "feedbackAverageScore": 5.0
+  },
+  {
+   "id": "3152528",
+   "location": {
+    "name": "Aljezur",
+    "slug": "aljezur",
+    "admin1Name": "Faro",
+    "admin1Code": "09",
+    "admin1Slug": "faro",
+    "admin2Code": "0803",
+    "admin2Name": "Aljezur",
+    "admin2Slug": "aljezur",
+    "countryName": "Portugal",
+    "countryCode": "pt",
+    "countrySlug": "portugal",
+    "countryIso3Code": "prt",
+    "continent": "continentcode",
+    "continentName": "EU",
+    "continentSlug": "europe",
+    "coordinates": {
+     "lat": 37.31915,
+     "lon": -8.8033
+    }
+   },
+   "animals": [
+    {
+     "name": "cat",
+     "slug": "cats",
+     "count": 3
+    }
+   ],
+   "title": "Coastal Sanctuary: Ocean Views, Peaceful Setting & Sweet Feline Companions",
+   "photos": [
+    {
+     "id": "17388018",
+     "publicId": "remote_media/media/photo/a9/d95669a69b4538bf609199103a0801",
+     "width": 4032,
+     "height": 3024,
+     "blurhash": "MoI#r-smWXWUWX_4s:bbozs.X:ozjEWBR*",
+     "description": "The pool and the backyard face the nature park and the ocean. From the house, you can walk to the cliffs in 15 minutes and descend to one of the beaches, or continue hiking along the cliffs on the Fisherman's Trail to Monte Clérigo or Arrifana.",
+     "coverPhoto": true
+    },
+    {
+     "id": "17388040",
+     "publicId": "remote_media/media/photo/0f/ec25f7a11243d0b3680e88c1d483b1",
+     "width": 4032,
+     "height": 3024,
+     "blurhash": "MkDTeet7I9t8IA.TozRjkCMwNMa#oeayjE",
+     "description": "The view through one of the sliding doors to the backyard/pool area. The cats love sitting on the sofa and watching \"cat TV.\" One of their favorite \"shows\" is \"Birds in Our Backyard.\"",
+     "coverPhoto": false
+    },
+    {
+     "id": "17388055",
+     "publicId": "remote_media/media/photo/4d/a2b71d0ccb47739794eda75c6be968",
+     "width": 4032,
+     "height": 3024,
+     "blurhash": "MXFsGQ?v%hM{IU~V-o%MWBM{tQxtxZt7WA",
+     "description": "Hugo is the snuggliest of the three cats. Once you've earned his trust, he won't leave your side. He'll sit in your lab, be your best buddy while you work or read, and follow you from room to room.",
+     "coverPhoto": false
+    }
+   ],
+   "assignments": [
+    {
+     "id": "2130591",
+     "startDate": "2026-12-12",
+     "endDate": "2026-12-15",
+     "numberOfApplicants": 1,
+     "isReviewing": false,
+     "isConfirmed": false
+    },
+    {
+     "id": "2131428",
+     "startDate": "2027-02-09",
+     "endDate": "2027-02-14",
+     "numberOfApplicants": 6,
+     "isReviewing": true,
+     "isConfirmed": false
+    }
+   ],
+   "published": "2026-10-17T11:21:00",
+   "minutesPetCanBeLeftAlone": null,
+   "petsWelcome": null,
+   "guestsWelcome": null,
+   "feedbackAverageScore": 0.0
+  },
+  {
+   "id": "2932941",
+   "location": {
+    "name": "Peniche",
+    "slug": "peniche",
+    "admin1Name": "Leiria",
+    "admin1Code": "13",
+    "admin1Slug": "leiria",
+    "admin2Code": "1014",
+    "admin2Name": "Peniche",
+    "admin2Slug": "peniche",
+    "countryName": "Portugal",
+    "countryCode": "pt",
+    "countrySlug": "portugal",
+    "countryIso3Code": "prt",
+    "continent": "continentcode",
+    "continentName": "EU",
+    "continentSlug": "europe",
+    "coordinates": {
+     "lat": 39.3558,
+     "lon": -9.38112
+    }
+   },
+   "animals": [
+    {
+     "name": "cat",
+     "slug": "cats",
+     "count": 1
+    }
+   ],
+   "title": "Dusty's wonderland",
+   "photos": [
+    {
+     "id": "15738274",
+     "publicId": "remote_media/media/photo/48/f1ef1ba3d74cea98785ccdc7269192.jpg",
+     "width": 3056,
+     "height": 3056,
+     "blurhash": null,
+     "description": "The sitter can use the smart TV, read the available books and play with my cat Dusty",
+     "coverPhoto": true
+    },
+    {
+     "id": "15738277",
+     "publicId": "remote_media/media/photo/4d/ce5042c94f4578b04bfc62d2279b70.jpg",
+     "width": 3056,
+     "height": 3056,
+     "blurhash": null,
+     "description": "Cook in the kitchen and be carefull with the electric appliances :)",
+     "coverPhoto": false
+    },
+    {
+     "id": "15738278",
+     "publicId": "remote_media/media/photo/9e/8d009b367f47178b85cdc4717dac0b.jpg",
+     "width": 3056,
+     "height": 3056,
+     "blurhash": null,
+     "description": "Dinning room",
+     "coverPhoto": false
+    }
+   ],
+   "assignments": [
+    {
+     "id": "2126392",
+     "startDate": "2026-10-28",
+     "endDate": "2026-11-03",
+     "numberOfApplicants": 3,
+     "isReviewing": false,
+     "isConfirmed": false
+    },
+    {
+     "id": "2126399",
+     "startDate": "2026-11-12",
+     "endDate": "2026-11-17",
+     "numberOfApplicants": 1,
+     "isReviewing": true,
+     "isConfirmed": true
+    },
+    {
+     "id": "2126402",
+     "startDate": "2026-11-19",
+     "endDate": "2026-11-24",
+     "numberOfApplicants": 1,
+     "isReviewing": true,
+     "isConfirmed": true
+    }
+   ],
+   "published": "2026-10-12T15:24:03",
+   "minutesPetCanBeLeftAlone": null,
+   "petsWelcome": null,
+   "guestsWelcome": null,
+   "feedbackAverageScore": 5.0
+  },
+  {
+   "id": "438023",
+   "location": {
+    "name": "Mouronho",
+    "slug": "mouronho",
+    "admin1Name": "Coimbra",
+    "admin1Code": "07",
+    "admin1Slug": "coimbra",
+    "admin2Code": "0616",
+    "admin2Name": "Tabua",
+    "admin2Slug": "tabua",
+    "countryName": "Portugal",
+    "countryCode": "pt",
+    "countrySlug": "portugal",
+    "countryIso3Code": "prt",
+    "continent": "continentcode",
+    "continentName": "EU",
+    "continentSlug": "europe",
+    "coordinates": {
+     "lat": 40.28069,
+     "lon": -8.04332
+    }
+   },
+   "animals": [
+    {
+     "name": "dog",
+     "slug": "dogs",
+     "count": 1
+    },
+    {
+     "name": "cat",
+     "slug": "cats",
+     "count": 1
+    },
+    {
+     "name": "horse",
+     "slug": "horses",
+     "count": 2
+    },
+    {
+     "name": "small pet",
+     "slug": "small-pets",
+     "count": 1
+    },
+    {
+     "name": "fish",
+     "slug": "fish",
+     "count": 1
+    },
+    {
+     "name": "poultry",
+     "slug": "poultry",
+     "count": 1
+    }
+   ],
+   "title": "Animal-loving sitters wanted: horses, dog, cat & hens in peaceful Portugal",
+   "photos": [
+    {
+     "id": "17285356",
+     "publicId": "remote_media/media/photo/12/587262fa7947f487ca00cd33fa6624",
+     "width": 4000,
+     "height": 3000,
+     "blurhash": "MXHnysVY%MofX84To#M|jvjswcbdt7V@ju",
+     "description": "View of the poolside pergola and outdoor dining area.",
+     "coverPhoto": true
+    },
+    {
+     "id": "17285193",
+     "publicId": "remote_media/media/photo/bd/8127d1d68f408e9011e91b236455ea",
+     "width": 8160,
+     "height": 6120,
+     "blurhash": "MPF=m%nN9atSM{~VNfSi%1RjoftRV@nNoz",
+     "description": "Living room with 5-seater, comfortable sofa. Smart TV available for you to log into your streaming apps.",
+     "coverPhoto": false
+    },
+    {
+     "id": "17285196",
+     "publicId": "remote_media/media/photo/08/df7094555b465ea50d65b0668ff09c",
+     "width": 4000,
+     "height": 3000,
+     "blurhash": "MFEVWuI:0Lxu%g-SIpRkR,%2VrS2X9WBV?",
+     "description": "Fully stocked, modern kitchen with most cooking equipment that you could need.",
+     "coverPhoto": false
+    }
+   ],
+   "assignments": [
+    {
+     "id": "2115589",
+     "startDate": "2026-12-03",
+     "endDate": "2026-12-30",
+     "numberOfApplicants": 3,
+     "isReviewing": false,
+     "isConfirmed": false
+    }
+   ],
+   "published": "2026-10-12T05:15:29",
+   "minutesPetCanBeLeftAlone": null,
+   "petsWelcome": null,
+   "guestsWelcome": null,
+   "feedbackAverageScore": 0.0
+  }
+ ],
+ "total": 6
+}

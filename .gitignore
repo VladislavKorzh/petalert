@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Стан бота (SQLite) — не в git
+var/
+
+# Токен бота й креденшели проксі. У репозиторій іде тільки .env.example
+.env
+
+.DS_Store
+
+# Обв'язка агентів, а не робота проєкту
+.serena/
+.claude/settings.local.json
