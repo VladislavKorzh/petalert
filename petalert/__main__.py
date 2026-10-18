@@ -3,7 +3,7 @@
     python -m petalert                        # bot + worker (what systemd runs)
     python -m petalert codes generate 100     # a new pack of invite codes with deep links
     python -m petalert codes list             # unused codes
-    python -m petalert rebaseline             # one-off upgrade step, see rebaseline() below
+    python -m petalert rebaseline mmh         # re-index a site quietly, see rebaseline() below
 """
 
 from __future__ import annotations
@@ -23,17 +23,17 @@ from aiogram.types import BotCommand
 from .bot import build_dispatcher
 from .bot.notify import TelegramOutbox
 from .config import Settings
-from .db import Store, format_code, utcnow
+from .db import Store, format_code
 from .http import Http
-from .models import Filter, listing_matches, matching_slots, slot_key
 from .scheduler import Worker
-from .sources import build_sources
+from .sources import REGISTRY, build_sources
 
 log = logging.getLogger("petalert")
 
 COMMANDS = [
     BotCommand(command="new", description="Create a subscription"),
     BotCommand(command="list", description="Your subscriptions"),
+    BotCommand(command="sites", description="Sites you get alerts from"),
     BotCommand(command="cancel", description="Abort the current dialog"),
     BotCommand(command="help", description="How it works"),
 ]
@@ -72,45 +72,21 @@ async def run_bot(settings: Settings) -> None:
         store.close()
 
 
-async def rebaseline(settings: Settings, keep_newest: int) -> None:
-    """Silently mark as seen what a subscription could never see before.
+def rebaseline(settings: Settings, source: str) -> None:
+    """On the next tick, every subscription quietly marks what matches on
+    `source` right now as seen (no messages; its baseline time stays).
 
-    Run it once, with the bot stopped, after a change that lets a source reach
-    listings it couldn't reach before (here: the cursor crawl past the old
-    1000-result cap). Without it the first new-style crawl would alert all of
-    those old listings as new. The newest `keep_newest` listings — the old
-    crawl's horizon — and the current first page are left alone: anything new
-    among them still alerts through the normal dedup.
+    For a change on our side that makes old listings matchable for the first
+    time (say, a country added to a source's table): without it they would be
+    alerted as new. The first tick after a restart comes right away, so run
+    this with the bot stopped, after updating the code and before starting it.
+    New sits that appeared since the last tick are marked seen too.
     """
     store = Store(settings.db_path)
-    http = Http(settings.proxy_url, settings.proxy_mode)
-    sources = build_sources(http, settings)
     try:
-        groups: dict[tuple[str, str], list] = {}
-        for sub in store.due_subscriptions():
-            if sub.status == "active":
-                groups.setdefault(sub.group, []).append(sub)
-        for (source_key, filter_json), subs in groups.items():
-            flt = Filter.from_json(filter_json)
-            source = sources[source_key]
-            listings = await source.search(flt, max_pages=None)  # newest first
-            keep = {l.id for l in listings[:keep_newest]}
-            keep |= {l.id for l in await source.search(flt, max_pages=1)}  # published meanwhile
-            today = utcnow().date()
-            keys = [
-                (slot_key(l, s), s.end)
-                for l in listings
-                if l.id not in keep and listing_matches(l, flt)
-                for s in matching_slots(l, flt, today)
-            ]
-            for sub in subs:
-                known = store.delivered_keys(sub.id)
-                store.mark_delivered(sub, keys)
-                added = len(store.delivered_keys(sub.id)) - len(known)
-                print(f"#{sub.id}: {len(listings)} listings, {len(listings) - len(keep)} beyond the newest; "
-                      f"{added} slots newly marked seen")
+        n = store.reindex(source)
+        print(f"{n} subscriptions will re-index {source} quietly on the next tick")
     finally:
-        await http.aclose()
         store.close()
 
 
@@ -148,9 +124,8 @@ def main() -> None:
     gen = codes_sub.add_parser("generate")
     gen.add_argument("n", type=int, nargs="?", default=100)
     codes_sub.add_parser("list")
-    rb = sub.add_parser("rebaseline", help="one-off upgrade step; run with the bot stopped")
-    rb.add_argument("--keep-newest", type=int, default=1000,
-                    help="leave the N newest listings to normal dedup (the old crawl's horizon)")
+    rb = sub.add_parser("rebaseline", help="re-index a site quietly; run with the bot stopped")
+    rb.add_argument("source", choices=list(REGISTRY))
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -162,7 +137,7 @@ def main() -> None:
         codes(args, settings)
         return
     if args.cmd == "rebaseline":
-        asyncio.run(rebaseline(settings, args.keep_newest))
+        rebaseline(settings, args.source)
         return
     if not settings.bot_token:
         sys.exit("BOT_TOKEN is not set — see .env.example")

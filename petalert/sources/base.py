@@ -8,9 +8,13 @@ about the specific site.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from ..models import Country, Filter, Listing
+
+# Tells the admin about something the source fixed or noticed on its own.
+Notice = Callable[[str], Awaitable[None]]
 
 
 class SourceError(Exception):
@@ -18,8 +22,11 @@ class SourceError(Exception):
 
 
 class Source(Protocol):
-    key: str  # dedup key prefix and the value of `subscription.source`
-    title: str  # human-readable name: dialog button, alert footer
+    key: str  # the site's id: slot-key prefix, `watch`/`chat_source`/`query_state`.source
+    title: str  # human-readable name: /sites button, alert footer
+    # Optional: `always_complete = True` if every search returns all matches
+    # whatever max_pages (one request is the whole site): every tick is then a
+    # full crawl and the worker schedules none.
 
     async def countries(self, continent: str) -> list[Country]:
         """Countries of the continent that have open sits right now, largest first."""

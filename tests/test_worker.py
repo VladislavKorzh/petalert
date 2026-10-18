@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from petalert.db import Store
+from petalert.db import Store, Watch
 from petalert.models import Filter, Listing, Slot
 from petalert.scheduler import MAX_LIST, ChatGone, Worker
 from petalert.sources.base import SourceError
@@ -106,7 +106,7 @@ def env(tmp_path):
 
 def test_baseline_sends_nothing_then_only_new_slots(env):
     env.source.listings = [listing("1", slot("a")), listing("2", slot("b"), slot("x", is_open=False))]
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
 
     env.tick()
     assert env.outbox.alerts == []
@@ -126,7 +126,7 @@ def test_baseline_sends_nothing_then_only_new_slots(env):
 
 def test_republished_listing_alerts_only_its_new_dates(env):
     env.source.listings = [listing("1", slot("old"))]
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()
 
     env.advance()
@@ -137,7 +137,7 @@ def test_republished_listing_alerts_only_its_new_dates(env):
 
 def test_reopened_slot_is_alerted(env):
     env.source.listings = [listing("1", slot("a", is_open=False))]
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
 
     env.advance()
@@ -148,8 +148,8 @@ def test_reopened_slot_is_alerted(env):
 
 def test_two_subscriptions_of_one_chat_get_one_message(env):
     env.source.listings = []
-    a = env.store.add_subscription(10, "ths", FLT)
-    b = env.store.add_subscription(10, "ths", Filter("europe", country="portugal"))
+    a = env.store.add_subscription(10, FLT)
+    b = env.store.add_subscription(10, Filter("europe", country="portugal"))
     env.tick()
 
     env.advance()
@@ -160,14 +160,14 @@ def test_two_subscriptions_of_one_chat_get_one_message(env):
 
 
 def test_identical_filters_share_one_request(env):
-    env.store.add_subscription(10, "ths", FLT)
-    env.store.add_subscription(20, "ths", FLT)
+    env.store.add_subscription(10, FLT)
+    env.store.add_subscription(20, FLT)
     env.tick()
     assert len(env.source.calls) == 1
 
 
 def test_failed_send_is_retried_next_tick(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [listing("1", slot("s"))]
@@ -182,7 +182,7 @@ def test_failed_send_is_retried_next_tick(env):
 
 
 def test_blocked_bot_pauses_the_chat(env):
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [listing("1", slot("s"))]
@@ -192,15 +192,15 @@ def test_blocked_bot_pauses_the_chat(env):
 
 
 def test_resume_rebaselines_silently(env):
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()
-    env.store.set_status(sub, 10, "paused")
+    env.store.pause(sub, 10)
 
     env.advance()
     env.source.listings = [listing("1", slot("during_pause"))]
     env.tick()
 
-    env.store.set_status(sub, 10, "baselining")  # this is what the Resume button does
+    assert env.store.resume(sub, 10)  # what the Resume button does
     env.advance()
     env.tick(only_baselining=True)
     assert env.outbox.alerts == []
@@ -208,7 +208,7 @@ def test_resume_rebaselines_silently(env):
 
 
 def test_several_listings_go_out_as_one_table_nearest_dates_first(env):
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [
@@ -225,7 +225,7 @@ def test_several_listings_go_out_as_one_table_nearest_dates_first(env):
 
 
 def test_table_overflow_goes_out_next_tick(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [
@@ -242,7 +242,7 @@ def test_table_overflow_goes_out_next_tick(env):
 
 
 def test_failed_table_is_retried_whole(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [listing("1", slot("a")), listing("2", slot("b"))]
@@ -255,7 +255,7 @@ def test_failed_table_is_retried_whole(env):
 
 
 def test_blocked_bot_pauses_the_chat_on_a_table_too(env):
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [listing("1", slot("a")), listing("2", slot("b"))]
@@ -265,7 +265,7 @@ def test_blocked_bot_pauses_the_chat_on_a_table_too(env):
 
 
 def test_full_crawl_decision(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()  # baseline — full
     env.advance(30)
     env.tick()  # regular — page 1
@@ -279,16 +279,16 @@ def test_full_crawl_decision(env):
 
 
 def test_only_baselining_tick_skips_settled_groups(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
-    env.store.add_subscription(10, "ths", Filter("asia"))
+    env.store.add_subscription(10, Filter("asia"))
     env.advance(1)
     env.tick(only_baselining=True)
     assert env.source.calls == [None, None]  # only the new group
 
 
 def test_local_filter_guards_against_api_ignoring_a_filter(env):
-    env.store.add_subscription(10, "ths", Filter("europe", country="portugal"))
+    env.store.add_subscription(10, Filter("europe", country="portugal"))
     env.tick()
     env.advance()
     env.source.listings = [listing("1", slot("s"), country="spain")]
@@ -297,7 +297,7 @@ def test_local_filter_guards_against_api_ignoring_a_filter(env):
 
 
 def test_health_alert_after_three_failed_ticks_and_recovery(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.source.error = SourceError("THS HTTP 500: boom")
     for _ in range(4):
         env.tick()
@@ -316,7 +316,7 @@ def test_run_loop_polls_at_start_and_baselines_on_wake(env):
         task = asyncio.create_task(env.worker.run())
         await asyncio.sleep(0.05)
         assert env.source.calls == [None]  # startup tick: baseline of the "asia" subscription
-        sub = env.store.add_subscription(10, "ths", FLT)
+        sub = env.store.add_subscription(10, FLT)
         env.worker.wake()
         await asyncio.sleep(0.05)
         task.cancel()
@@ -324,14 +324,14 @@ def test_run_loop_polls_at_start_and_baselines_on_wake(env):
             await task
         return sub
 
-    env.store.add_subscription(20, "ths", Filter("asia"))
+    env.store.add_subscription(20, Filter("asia"))
     sub = asyncio.run(scenario())
     assert env.store.subscription(sub, 10).status == "active"
     assert env.source.calls == [None, None]
 
 
 def test_excluded_country_never_alerts(env):
-    env.store.add_subscription(10, "ths", Filter("europe", exclude_countries=("united-kingdom",)))
+    env.store.add_subscription(10, Filter("europe", exclude_countries=("united-kingdom",)))
     env.tick()
     env.advance()
     env.source.listings = [
@@ -343,7 +343,7 @@ def test_excluded_country_never_alerts(env):
 
 
 def test_full_crawl_every_three_hours(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()  # baseline
     for _ in range(6):
         env.advance(30)
@@ -352,7 +352,7 @@ def test_full_crawl_every_three_hours(env):
 
 
 def test_expired_date_window_pauses_and_tells_once(env):
-    sub = env.store.add_subscription(10, "ths", Filter("europe", date_to=date(2026, 10, 17)))
+    sub = env.store.add_subscription(10, Filter("europe", date_to=date(2026, 10, 17)))
     env.tick()
     assert env.store.subscription(sub, 10).status == "paused"
     assert env.source.calls == []  # no request for a window that can't match
@@ -363,7 +363,7 @@ def test_expired_date_window_pauses_and_tells_once(env):
 
 
 def test_subscription_paused_while_the_tick_was_fetching_gets_nothing(env):
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()
     env.advance()
     env.source.listings = [listing("1", slot("s"))]
@@ -371,7 +371,7 @@ def test_subscription_paused_while_the_tick_was_fetching_gets_nothing(env):
 
     async def search_then_pause(flt, *, max_pages):
         result = await real_search(flt, max_pages=max_pages)
-        env.store.set_status(sub, 10, "paused")  # the user taps Pause mid-tick
+        env.store.pause(sub, 10)  # the user taps Pause mid-tick
         return result
 
     env.source.search = search_then_pause
@@ -382,7 +382,7 @@ def test_subscription_paused_while_the_tick_was_fetching_gets_nothing(env):
 def test_failed_send_is_retried_without_forcing_full_crawls(env):
     # A persistent failure (Telegram down for hours) must not turn every tick
     # into a 20+ request full crawl.
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
     env.source.listings = [listing("1", slot("s"))]
     env.outbox.fail_alerts = True
@@ -400,7 +400,7 @@ def test_scheduled_full_crawls_are_capped_per_tick(env):
     from petalert.scheduler import MAX_SCHEDULED_FULL
 
     for country in ("a", "b", "c", "d", "e", "f"):
-        env.store.add_subscription(10, "ths", Filter("europe", country=country))
+        env.store.add_subscription(10, Filter("europe", country=country))
     env.tick()  # six baselines: all full, no cap
     assert env.source.calls == [None] * 6
     env.now += timedelta(hours=3)
@@ -412,7 +412,7 @@ def test_scheduled_full_crawls_are_capped_per_tick(env):
 
 
 def test_full_crawl_new_counts_only_what_page_one_could_not_see(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
     env.source.listings = [listing(str(i), slot(f"s{i}")) for i in range(120)]
     env.now += timedelta(hours=3)
@@ -421,7 +421,7 @@ def test_full_crawl_new_counts_only_what_page_one_could_not_see(env):
 
 
 def test_failing_full_crawl_still_delivers_page_one_and_yields_its_slot(env):
-    env.store.add_subscription(10, "ths", FLT)
+    env.store.add_subscription(10, FLT)
     env.tick()
     real = env.source.search
 
@@ -441,7 +441,7 @@ def test_deferred_catch_up_is_not_lost(env):
     from petalert.scheduler import MAX_SCHEDULED_FULL
 
     for country in "abcdef":
-        env.store.add_subscription(10, "ths", Filter("europe", country=country))
+        env.store.add_subscription(10, Filter("europe", country=country))
     env.tick()
     env.now += timedelta(hours=2, minutes=30)  # downtime: everyone needs a catch-up
     env.tick()
@@ -451,9 +451,9 @@ def test_deferred_catch_up_is_not_lost(env):
 
 
 def test_failing_full_crawl_never_finishes_a_baseline_on_page_one(env):
-    old = env.store.add_subscription(10, "ths", FLT)
+    old = env.store.add_subscription(10, FLT)
     env.tick()
-    new = env.store.add_subscription(20, "ths", FLT)  # same group, still baselining
+    new = env.store.add_subscription(20, FLT)  # same group, still baselining
     real = env.source.search
 
     async def full_breaks(flt, *, max_pages):
@@ -466,8 +466,7 @@ def test_failing_full_crawl_never_finishes_a_baseline_on_page_one(env):
     env.advance()
     env.tick()
     assert [a[:2] for a in env.outbox.alerts] == [(10, "1")]  # the active one still hears about it
-    assert env.store.subscription(new, 20).status == "baselining"
-    assert env.store.subscription(old, 10).status == "active"
+    assert set(env.store.watches()) == {(old, "ths")}  # the new one is still unbaselined
 
 
 def test_old_listing_seen_for_the_first_time_is_not_news(env):
@@ -483,9 +482,9 @@ def test_old_listing_seen_for_the_first_time_is_not_news(env):
 
     long_ago = datetime(2026, 10, 8, 8, 23, tzinfo=UTC)
     env.source.listings = [dated("seen", long_ago, seq_slot(2131000))]
-    sub = env.store.add_subscription(10, "ths", FLT)
+    sub = env.store.add_subscription(10, FLT)
     env.tick()  # baseline sees ids up to 2131000; "stan" is out of reach
-    assert env.store.subscription(sub, 10).watermark == 2131000
+    assert env.store.watches(10)[(sub, "ths")][1] == 2131000
 
     env.advance()
     later = env.now + timedelta(minutes=5)
@@ -499,3 +498,130 @@ def test_old_listing_seen_for_the_first_time_is_not_news(env):
     ((_, items),) = env.outbox.lists
     assert sorted(i for i, _, _ in items) == ["newdates", "republished"]
     assert "ths:2111592" in env.store.delivered_keys(sub)  # noted silently, never alerted later
+
+
+class SecondSource(FakeSource):
+    key = "mmh"
+    title = "Second"
+
+
+def test_each_site_is_baselined_on_its_own_and_a_site_turned_on_later_sends_nothing_old(env):
+    second = SecondSource()
+    env.worker.sources["mmh"] = second
+    env.source.listings = [listing("1", slot("a"))]
+    second.listings = [Listing(**{**listing("m1", slot("x")).__dict__, "source": "mmh"})]
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    ((_, live),) = env.outbox.texts
+    assert f"Subscription #{sub} is live" in live and "Fake: 1 listings" in live and "Second: 1 listings" in live
+
+    env.store.set_source(10, "mmh", False)
+    env.advance()
+    second.listings.append(Listing(**{**listing("m2", slot("y")).__dict__, "source": "mmh"}))
+    env.tick()
+    assert env.outbox.alerts == [] and len(second.calls) == 1  # off: not even fetched
+
+    env.store.set_source(10, "mmh", True)
+    env.advance()
+    env.tick()  # "m2" appeared while the site was off: indexed silently, not sent
+    assert env.outbox.alerts == []
+    assert "is live on Second" in env.outbox.texts[-1][1]
+
+    env.advance()
+    second.listings.append(Listing(**{**listing("m3", slot("z")).__dict__, "source": "mmh"}))
+    env.source.listings.append(listing("2", slot("b")))
+    env.tick()
+    assert sorted(a[1] for a in env.outbox.alerts) == [] and len(env.outbox.lists) == 1
+    assert sorted(i for i, _, _ in env.outbox.lists[0][1]) == ["2", "m3"]
+
+
+def test_site_turned_off_mid_tick_gets_nothing(env):
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("s"))]
+    real = env.source.search
+
+    async def off_meanwhile(flt, *, max_pages):
+        env.store.set_source(10, "ths", False)
+        return await real(flt, max_pages=max_pages)
+
+    env.source.search = off_meanwhile
+    env.tick()
+    assert env.outbox.alerts == [] and env.store.delivered_keys(sub) == set()
+
+
+def test_complete_sources_are_full_every_tick_without_taking_scheduled_slots(env):
+    env.source.always_complete = True
+    for i in range(6):
+        env.store.add_subscription(10, Filter("europe", min_days=i + 1))
+    env.tick()
+    env.now += timedelta(hours=5)  # every group overdue for a scheduled full crawl
+    groups = {}
+    for sub in env.store.due_subscriptions():
+        groups[("ths", sub.filter_json)] = [Watch(sub, "ths", env.now)]
+    assert env.worker._full_groups(groups, env.now) == (set(), set())  # no slot taken
+    stats = env.tick()
+    assert stats.full == 6 and stats.failed == 0  # yet each search counts as a full crawl
+
+
+def mmh(lid: str, *slots: Slot) -> Listing:
+    return Listing(**{**listing(lid, *slots).__dict__, "source": "mmh"})
+
+
+def test_one_site_off_mid_tick_only_drops_that_sites_alerts(env):
+    second = SecondSource()
+    env.worker.sources["mmh"] = second
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("a"))]
+    second.listings = [mmh("m1", slot("x"))]
+    real = second.search
+
+    async def off_meanwhile(flt, *, max_pages):
+        env.store.set_source(10, "mmh", False)
+        return await real(flt, max_pages=max_pages)
+
+    second.search = off_meanwhile
+    env.tick()
+    assert [a[1] for a in env.outbox.alerts] == ["1"] and env.outbox.lists == []
+    assert env.store.delivered_keys(sub) == {"ths:a"}
+
+
+def test_reindex_marks_quietly_and_keeps_alerting_after(env):
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    env.outbox.texts.clear()
+    env.store.reindex("ths")
+    env.advance()
+    env.source.listings = [listing("old", slot("o"))]  # e.g. newly matchable after a code change
+    env.tick()
+    assert env.outbox.alerts == [] and env.outbox.texts == []  # no "is live" either
+    assert "ths:o" in env.store.delivered_keys(sub)
+    env.advance()
+    env.source.listings.append(listing("new", slot("n")))
+    env.tick()
+    assert [a[1] for a in env.outbox.alerts] == ["new"]
+
+
+def test_no_live_message_for_a_subscription_paused_mid_tick(env):
+    sub = env.store.add_subscription(10, FLT)
+    real = env.source.search
+
+    async def pause_meanwhile(flt, *, max_pages):
+        result = await real(flt, max_pages=max_pages)
+        env.store.pause(sub, 10)
+        return result
+
+    env.source.search = pause_meanwhile
+    env.tick()
+    assert env.outbox.texts == []
+
+
+def test_wake_ticks_do_not_count_towards_a_failure_streak(env):
+    env.store.add_subscription(10, FLT)
+    env.source.error = SourceError("down")
+    for _ in range(5):
+        env.tick(only_baselining=True)
+    assert env.worker.fail_streak.get("ths", 0) == 0 and env.admin == []

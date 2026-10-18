@@ -40,12 +40,14 @@ def tg_len(html_text: str) -> int:
     return len(unescape(_TAG.sub("", html_text)).encode("utf-16-le")) // 2
 
 
-def pet_label(name: str, count: int) -> str:
+def pet_label(name: str, count: int | None) -> str:
     plural = _PLURAL.get(name, f"{name}s")
+    if count is None:  # the site doesn't say how many
+        return f"{PET_EMOJI.get(name, '🐾')} {plural}"
     return f"{PET_EMOJI.get(name, '🐾')} {count} {name if count == 1 else plural}"
 
 
-def pets_line(pets: tuple[tuple[str, int], ...]) -> str:
+def pets_line(pets: tuple[tuple[str, int | None], ...]) -> str:
     return " · ".join(pet_label(name, count) for name, count in pets)
 
 

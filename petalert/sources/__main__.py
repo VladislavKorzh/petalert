@@ -2,10 +2,11 @@
 
     python -m petalert.sources countries --continent europe
     python -m petalert.sources search --continent europe --country portugal --min-days 14
+    python -m petalert.sources --source mmh search --continent europe --exclude united-kingdom
     python -m petalert.sources dump --continent europe --country portugal > tests/fixtures/x.json
 
 `search` prints only the slots that pass the local filter — exactly what would
-go into alerts. `dump` prints the raw THS response, for fixtures.
+go into alerts. `dump` prints the raw THS response, for fixtures (THS only).
 """
 
 from __future__ import annotations

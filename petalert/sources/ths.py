@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Any
@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 
 from ..http import Http
 from ..models import Country, Filter, Listing, Slot
-from .base import SourceError
+from .base import Notice, SourceError
 
 log = logging.getLogger(__name__)
 
@@ -58,8 +58,6 @@ FAR_FUTURE = "2100-01-01T00:00:00"  # a cursor that keeps every dated listing
 SMALL_TOTAL = 300
 LONDON = ZoneInfo("Europe/London")  # `published` is naive local time of the site
 _VERSION_RE = re.compile(r'"apiVersion":"([0-9]{4}-[0-9]{2}-[0-9]{2})"')
-
-Notice = Callable[[str], Awaitable[None]]
 
 
 def build_query(

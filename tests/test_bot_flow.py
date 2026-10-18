@@ -24,7 +24,7 @@ from aiogram.types import CallbackQuery, Chat, InaccessibleMessage, Message, Upd
 from petalert.bot import build_dispatcher
 from petalert.bot.browse import Browse, Item, pack
 from petalert.bot.dialog import Pick
-from petalert.bot.manage import SubAction
+from petalert.bot.manage import SiteToggle, SubAction
 from petalert.db import Store
 from petalert.models import Country, Filter, Listing, Slot
 
@@ -128,7 +128,7 @@ def h(tmp_path):
     harness.store.close()
 
 
-def test_full_new_dialog_creates_a_baselining_subscription(h):
+def test_full_new_dialog_creates_an_unbaselined_subscription(h):
     assert "Step 1 · Continent" in texts(h.text("/new"))[0]
     calls = h.press(Pick(step="cont", value="europe"))
     (country_text,) = texts(calls)
@@ -148,7 +148,7 @@ def test_full_new_dialog_creates_a_baselining_subscription(h):
     saved = texts(h.press(Pick(step="save")))[0]
     assert "Subscription #1 saved" in saved
     (sub,) = h.store.subscriptions(USER)
-    assert sub.status == "baselining"
+    assert sub.status == "active" and h.store.watches(USER) == {}  # indexed on the next tick
     assert sub.filter == Filter(
         "europe", country="portugal", date_from=date(2030, 11, 1), date_to=date(2031, 1, 31),
         min_days=7, pets=("cat",),
@@ -199,15 +199,20 @@ def test_stale_button_after_cancel(h):
 
 
 def test_list_pause_resume_delete(h):
-    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
+    sub_id = h.store.add_subscription(USER, Filter("europe"))
     (listing,) = texts(h.text("/list"))
-    assert listing.startswith(f"🔔 <b>Subscription #{sub_id}</b> · TrustedHousesitters\n⏳ indexing")
+    assert listing.startswith(f"🔔 <b>Subscription #{sub_id}</b>\n⏳ indexing TrustedHousesitters\n")
+    assert listing.endswith("🌐 Sites: TrustedHousesitters")
+    h.store.finish_baseline(h.store.subscription(sub_id, USER), "ths", [])
+    (listing,) = texts(h.text("/list"))
+    assert "\n🟢 active\n" in listing
 
     h.press(SubAction(action="pause", sub_id=sub_id))
     assert h.store.subscription(sub_id, USER).status == "paused"
 
     h.press(SubAction(action="resume", sub_id=sub_id))
-    assert h.store.subscription(sub_id, USER).status == "baselining"
+    assert h.store.subscription(sub_id, USER).status == "active"
+    assert h.store.watches(USER) == {}  # indexed again: nothing from the pause is sent
     assert h.worker.wakes == 1
 
     h.press(SubAction(action="delete", sub_id=sub_id))
@@ -215,7 +220,7 @@ def test_list_pause_resume_delete(h):
 
 
 def test_someone_elses_subscription_cannot_be_touched(h):
-    other = h.store.add_subscription(999, "ths", Filter("europe"))
+    other = h.store.add_subscription(999, Filter("europe"))
     assert answers(h.press(SubAction(action="delete", sub_id=other))) == ["Subscription not found"]
     assert h.store.subscription(other, 999) is not None
 
@@ -261,15 +266,16 @@ def test_forged_page_value_is_rejected_not_crashed(h):
 
 
 def test_resume_on_a_running_subscription_does_not_rebaseline(h):
-    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
-    h.store.set_status(sub_id, USER, "active")
+    sub_id = h.store.add_subscription(USER, Filter("europe"))
+    h.store.finish_baseline(h.store.subscription(sub_id, USER), "ths", [])
     assert answers(h.press(SubAction(action="resume", sub_id=sub_id))) == ["Already running"]
     assert h.store.subscription(sub_id, USER).status == "active"
+    assert set(h.store.watches(USER)) == {(sub_id, "ths")}  # its baseline survives
     assert h.worker.wakes == 0
 
 
 def test_buttons_on_a_message_older_than_48h_still_work(h):
-    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
+    sub_id = h.store.add_subscription(USER, Filter("europe"))
     calls = h.press(SubAction(action="pause", sub_id=sub_id), inaccessible=True)
     assert h.store.subscription(sub_id, USER).status == "paused"
     assert any(isinstance(c, SendMessage) for c in calls)  # a fresh message instead of an edit
@@ -288,8 +294,7 @@ def test_cancel_while_the_continent_tap_is_being_answered(h):
 
 
 def test_expired_callback_answer_does_not_abort_the_action(h):
-    sub_id = h.store.add_subscription(USER, "ths", Filter("europe"))
-    h.store.set_status(sub_id, USER, "active")
+    sub_id = h.store.add_subscription(USER, Filter("europe"))
     h.session.answers_expired = True  # pressed while the bot was down
     calls = h.press(SubAction(action="pause", sub_id=sub_id))
     assert h.store.subscription(sub_id, USER).status == "paused"
@@ -382,3 +387,117 @@ def test_table_button_on_an_inaccessible_message_sends_the_card_anew(h):
     calls = h.press(Browse(list_id=list_id, view="card", n=1), inaccessible=True)
     (sent,) = [c for c in calls if isinstance(c, SendMessage)]
     assert sent.text.startswith("🏡 <b>Sit 1</b>") and sent.link_preview_options.url == "https://img/1.jpg"
+
+
+class OtherSource(FakeSource):
+    key = "mmh"
+    title = "MindMyHouse"
+
+    async def countries(self, continent):
+        return [Country("france", "France", 27), Country("spain", "Spain", 5)]
+
+
+@pytest.fixture
+def two(tmp_path):
+    h = Harness(Store(tmp_path / "two.sqlite3"))
+    h.other = OtherSource()
+    h.dp = build_dispatcher(h.store, {"ths": h.source, "mmh": h.other}, h.worker, frozenset({USER}))
+    yield h
+    h.loop.close()
+    h.store.close()
+
+
+def test_with_two_sites_one_subscription_covers_both_and_countries_merge(two):
+    assert "Step 1 · Continent" in texts(two.text("/new"))[0]
+    (country_step,) = [c for c in two.press(Pick(step="cont", value="europe")) if isinstance(c, EditMessageText)]
+    buttons = [b.text for row in country_step.reply_markup.inline_keyboard for b in row]
+    countries = [b for b in buttons if " · " in b]
+    assert countries == ["Portugal · 30", "France · 27", "Spain · 25"]  # Spain: 20 + 5
+    two.press(Pick(step="ctry", value="2"))
+    two.press(Pick(step="dates", value="*"))
+    two.press(Pick(step="dur", value="*"))
+    confirm = texts(two.press(Pick(step="pets", value="*")))[0]
+    assert "🌐 Sites: TrustedHousesitters, MindMyHouse (change in /sites)" in confirm
+    two.press(Pick(step="save"))
+    (sub,) = two.store.subscriptions(USER)
+    assert sub.filter == Filter("europe", country="spain")
+
+
+def test_countries_still_load_when_one_site_fails(two):
+    async def broken(continent):
+        raise RuntimeError("down")
+
+    two.other.countries = broken
+    two.text("/new")
+    (country_step,) = [c for c in two.press(Pick(step="cont", value="europe")) if isinstance(c, EditMessageText)]
+    assert "Portugal · 30" in str(country_step.reply_markup)
+
+
+def test_sites_toggle(two):
+    (msg,) = texts(two.text("/sites"))
+    assert msg.startswith("🌐 <b>Sites</b>")
+    (keyboard,) = [c.reply_markup for c in two.text("/sites") if isinstance(c, SendMessage)]
+    off = SiteToggle.unpack(keyboard.inline_keyboard[1][0].callback_data)
+    assert (off.source, off.on) == ("mmh", False)
+    calls = two.press(off)
+    assert answers(calls) == ["MindMyHouse off"]
+    (edited,) = edits(calls)
+    assert [row[0].text for row in edited.reply_markup.inline_keyboard] == [
+        "✅ TrustedHousesitters", "⬜ MindMyHouse"
+    ]
+    assert two.store.enabled_sources(USER, ["ths", "mmh"]) == ["ths"]
+    assert two.worker.wakes == 0
+
+    # A double tap (or an old /sites message) asks for the state it already has.
+    assert answers(two.press(off)) == ["MindMyHouse is already off"]
+    assert two.store.enabled_sources(USER, ["ths", "mmh"]) == ["ths"]
+    assert answers(two.press(SiteToggle(source="mmh", on=True))) == ["MindMyHouse on — indexing current listings"]
+    assert two.worker.wakes == 1  # indexed now, not in half an hour
+    assert answers(two.press(SiteToggle(source="nope", on=True))) == ["Unknown site"]
+
+
+def test_sites_does_not_end_an_open_new_dialog(two):
+    two.text("/new")
+    two.press(Pick(step="cont", value="asia"))
+    two.press(Pick(step="ctry", value="*"))
+    two.press(Pick(step="dates", value="*"))
+    two.press(Pick(step="dur", value="*"))
+    two.press(Pick(step="pets", value="*"))
+    two.text("/sites")
+    two.press(SiteToggle(source="mmh", on=False))
+    assert "saved" in texts(two.press(Pick(step="save")))[0]
+    assert len(two.store.subscriptions(USER)) == 1
+
+
+def test_list_shows_each_sites_state(two):
+    sub = two.store.subscription(two.store.add_subscription(USER, Filter("europe")), USER)
+    two.store.finish_baseline(sub, "ths", [])
+    (text,) = texts(two.text("/list"))
+    assert "\n⏳ indexing MindMyHouse\n" in text and text.endswith("🌐 Sites: TrustedHousesitters, MindMyHouse")
+    two.store.set_source(USER, "mmh", False)
+    (text,) = texts(two.text("/list"))
+    assert "\n🟢 active\n" in text and text.endswith("🌐 Sites: TrustedHousesitters")
+    two.store.set_source(USER, "ths", False)
+    (text,) = texts(two.text("/list"))
+    assert "💤 all sites are off" in text
+
+
+def test_a_site_turned_off_is_left_out_of_new(two):
+    two.store.set_source(USER, "mmh", False)
+    two.text("/new")
+    (country_step,) = [c for c in two.press(Pick(step="cont", value="europe")) if isinstance(c, EditMessageText)]
+    assert "France" not in str(country_step.reply_markup)  # only the other site has France
+
+
+def test_every_site_off_in_the_middle_of_new(two):
+    two.text("/new")
+    two.store.set_source(USER, "ths", False)
+    two.store.set_source(USER, "mmh", False)
+    (edited,) = edits(two.press(Pick(step="cont", value="europe")))
+    assert edited.text == "💤 All sites are off for you — turn one on in /sites first."
+
+
+def test_new_with_every_site_off_points_to_sites(two):
+    two.store.set_source(USER, "ths", False)
+    two.store.set_source(USER, "mmh", False)
+    assert texts(two.text("/new")) == ["💤 All sites are off for you — turn one on in /sites first."]

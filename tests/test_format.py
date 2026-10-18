@@ -40,6 +40,11 @@ def test_alert_layout():
     assert button.url == "https://x/l/1/" and button.text == "🔗 Open on TrustedHousesitters"
 
 
+def test_unknown_pet_counts_are_plural_without_a_number():
+    text, _ = render_alert(listing(pets=(("dog", None), ("fish", None))), [slot(1)], [1], "MindMyHouse")
+    assert "🐕 dogs · 🐟 fish\n" in text
+
+
 def test_zero_applicants_is_highlighted():
     text, _ = render_alert(listing(), [slot(3)], [1], "THS")
     assert "🟢 no applicants yet" in text

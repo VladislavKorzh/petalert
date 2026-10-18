@@ -1,4 +1,4 @@
-"""Commands outside the dialog: /start, /help, /list, /cancel and subscription buttons."""
+"""Commands outside the dialog: /start, /help, /list, /sites, /cancel and their buttons."""
 
 from __future__ import annotations
 
@@ -21,13 +21,18 @@ HELP = (
     "<b>Commands</b>\n"
     "➕ /new — create a subscription (continent, country, dates, length, pets)\n"
     "📋 /list — your subscriptions: pause, resume, delete\n"
+    "🌐 /sites — which sites you get alerts from\n"
     "✖️ /cancel — abort the current dialog\n\n"
     "ℹ️ New dates on an existing listing count as new too. "
     "Sites are checked about every 30 minutes; several new sits at once "
     "arrive as one table — tap a number for the details."
 )
 
-STATUS = {"active": "🟢 active", "baselining": "⏳ indexing", "paused": "⏸ paused"}
+SITES_HELP = (
+    "🌐 <b>Sites</b>\n"
+    "Your subscriptions watch every site that is on.\n"
+    "A site you turn on is indexed silently first, so you only get its new sits."
+)
 
 
 class SubAction(CallbackData, prefix="s"):
@@ -35,9 +40,45 @@ class SubAction(CallbackData, prefix="s"):
     sub_id: Id
 
 
-def sub_text(sub: Subscription, sources_titles: dict[str, str]) -> str:
-    title = sources_titles.get(sub.source, sub.source)
-    return f"🔔 <b>Subscription #{sub.id}</b> · {title}\n{STATUS[sub.status]}\n\n{describe_filter(sub.filter)}"
+class SiteToggle(CallbackData, prefix="w"):
+    source: str
+    on: bool  # the state asked for: a double tap or an old message mustn't flip it back
+
+
+def sub_text(sub: Subscription, sites: list[tuple[str, bool]]) -> str:
+    """`sites`: (title, baselined) of the sites the chat has on."""
+    if sub.status == "paused":
+        status = "⏸ paused"
+    elif not sites:
+        status = "💤 all sites are off — /sites"
+    elif not all(done for _, done in sites):
+        status = "⏳ indexing " + ", ".join(title for title, done in sites if not done)
+    else:
+        status = "🟢 active"
+    where = ", ".join(title for title, _ in sites) or "none"
+    return (
+        f"🔔 <b>Subscription #{sub.id}</b>\n{status}\n\n{describe_filter(sub.filter)}\n"
+        f"🌐 Sites: {where}"
+    )
+
+
+def sites_of(store: Store, sources, sub: Subscription, watches) -> list[tuple[str, bool]]:
+    return [
+        (sources[key].title, (sub.id, key) in watches)
+        for key in store.enabled_sources(sub.chat_id, sources)
+    ]
+
+
+def sites_keyboard(store: Store, sources, chat: int) -> InlineKeyboardMarkup:
+    on = set(store.enabled_sources(chat, sources))
+    kb = InlineKeyboardBuilder()
+    for key, source in sources.items():
+        kb.button(
+            text=f"{'✅' if key in on else '⬜'} {source.title}",
+            callback_data=SiteToggle(source=key, on=key not in on),
+        )
+    kb.adjust(1)
+    return kb.as_markup()
 
 
 def sub_keyboard(sub: Subscription) -> InlineKeyboardMarkup:
@@ -48,10 +89,6 @@ def sub_keyboard(sub: Subscription) -> InlineKeyboardMarkup:
         kb.button(text="⏸ Pause", callback_data=SubAction(action="pause", sub_id=sub.id))
     kb.button(text="🗑 Delete", callback_data=SubAction(action="delete", sub_id=sub.id))
     return kb.as_markup()
-
-
-def _titles(sources) -> dict[str, str]:
-    return {key: source.title for key, source in sources.items()}
 
 
 async def cmd_start(message: Message, state: FSMContext) -> None:
@@ -75,9 +112,33 @@ async def cmd_list(message: Message, state: FSMContext, store: Store, sources) -
     if not subs:
         await message.answer("📭 No subscriptions yet. Create one with /new.")
         return
-    titles = _titles(sources)
+    watches = store.watches(message.chat.id)
     for sub in subs:
-        await message.answer(sub_text(sub, titles), reply_markup=sub_keyboard(sub))
+        await message.answer(sub_text(sub, sites_of(store, sources, sub, watches)), reply_markup=sub_keyboard(sub))
+
+
+async def cmd_sites(message: Message, store: Store, sources) -> None:
+    # The FSM is left alone: an open /new can be saved after changing sites.
+    await message.answer(SITES_HELP, reply_markup=sites_keyboard(store, sources, message.chat.id))
+
+
+async def on_site_toggle(
+    query: CallbackQuery, callback_data: SiteToggle, store: Store, worker: Worker, sources
+) -> None:
+    key = callback_data.source
+    if key not in sources:
+        await answer(query, "Unknown site", show_alert=True)
+        return
+    chat = chat_id(query)
+    on, title = callback_data.on, sources[key].title
+    if on == (key in store.enabled_sources(chat, sources)):
+        await answer(query, f"{title} is already {'on' if on else 'off'}")
+    else:
+        store.set_source(chat, key, on)
+        if on:
+            worker.wake()  # index it now, not in half an hour
+        await answer(query, f"{title} on — indexing current listings" if on else f"{title} off")
+    await edit(query, SITES_HELP, sites_keyboard(store, sources, chat))
 
 
 async def on_sub_action(
@@ -93,13 +154,11 @@ async def on_sub_action(
         await edit(query, f"🗑 Subscription #{sub_id} deleted.")
         return
     if callback_data.action == "pause":
-        changed = store.transition(sub_id, chat, "paused", allowed_from=("active", "baselining"))
+        changed = store.pause(sub_id, chat)
         toast = "Paused" if changed else "Already paused"
     elif callback_data.action == "resume":
         # Resume = baseline again: whatever appeared while paused is not sent.
-        # Only from paused: a stale Resume on a running subscription would
-        # otherwise silently swallow its undelivered new dates.
-        changed = store.transition(sub_id, chat, "baselining", allowed_from=("paused",))
+        changed = store.resume(sub_id, chat)
         toast = "Resumed" if changed else "Already running"
         if changed:
             worker.wake()
@@ -111,7 +170,7 @@ async def on_sub_action(
         await answer(query, "Subscription not found", show_alert=True)
         return
     await answer(query, toast)
-    await edit(query, sub_text(sub, _titles(sources)), sub_keyboard(sub))
+    await edit(query, sub_text(sub, sites_of(store, sources, sub, store.watches(chat))), sub_keyboard(sub))
 
 
 async def stale_button(query: CallbackQuery) -> None:
@@ -133,7 +192,9 @@ def build_routers() -> tuple[Router, Router]:
     router.message.register(cmd_help, Command("help"))
     router.message.register(cmd_cancel, Command("cancel"))
     router.message.register(cmd_list, Command("list"))
+    router.message.register(cmd_sites, Command("sites"))
     router.callback_query.register(on_sub_action, SubAction.filter())
+    router.callback_query.register(on_site_toggle, SiteToggle.filter())
     fallback = Router(name="fallback")
     fallback.callback_query.register(stale_button)
     fallback.message.register(unknown_text, F.text)

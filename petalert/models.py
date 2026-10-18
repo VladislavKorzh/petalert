@@ -103,7 +103,7 @@ class Listing:
     country: str
     place: str  # "Espiche, Faro, Portugal" — display only
     photo_url: str | None
-    pets: tuple[tuple[str, int], ...]  # (("cat", 2), ("dog", 1))
+    pets: tuple[tuple[str, int | None], ...]  # (("cat", 2), ("dog", 1)); None = unknown count
     slots: tuple[Slot, ...] = field(default=())
     published: datetime | None = None  # last (re)publication, UTC; None if unknown
     country_code: str | None = None  # ISO 3166 alpha-2, lower case ("pt") — display only

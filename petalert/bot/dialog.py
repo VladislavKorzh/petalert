@@ -1,4 +1,7 @@
-"""The /new dialog: source → continent → country → dates → length → pets → Save.
+"""The /new dialog: continent → country → dates → length → pets → Save.
+
+A subscription is site-agnostic: it watches every site the chat has on
+(/sites), so the country list merges those sites' countries.
 
 The country step has two modes: a single country (or any), or "the whole
 continent except the ones marked" — the same paginated list, but the buttons
@@ -29,13 +32,14 @@ from aiogram.types import CallbackQuery, InaccessibleMessage, InlineKeyboardMark
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..db import Store
-from ..models import CONTINENTS, PETS, Filter
+from ..models import CONTINENTS, PETS, Country, Filter
 from ..scheduler import Worker
 from .format import PET_EMOJI, describe_filter
 from .ui import STALE, answer, chat_id, edit, edit_markup
 
 log = logging.getLogger(__name__)
 
+ALL_OFF = "💤 All sites are off for you — turn one on in /sites first."
 COUNTRIES_PER_PAGE = 10
 DURATION_PRESETS = (3, 7, 14, 30)
 MAX_DAYS = 365
@@ -47,7 +51,6 @@ CONTINENT_EMOJI = {
 
 
 class NewSub(StatesGroup):
-    source = State()
     continent = State()
     country = State()
     exclude = State()
@@ -120,13 +123,24 @@ def _cancel(kb: InlineKeyboardBuilder) -> None:
     kb.button(text="✖ Cancel", callback_data=Pick(step="cancel"))
 
 
-def sources_keyboard(sources) -> InlineKeyboardMarkup:
-    kb = InlineKeyboardBuilder()
-    for key, source in sources.items():
-        kb.button(text=source.title, callback_data=Pick(step="src", value=key))
-    _cancel(kb)
-    kb.adjust(1)
-    return kb.as_markup()
+async def merged_countries(sources: list, continent: str) -> list[Country]:
+    """The countries of every given site, counts added up, largest first. A
+    site that fails is left out; only if all fail does this raise."""
+    merged: dict[str, Country] = {}
+    errors = []
+    for source in sources:
+        try:
+            countries = await source.countries(continent)
+        except Exception as exc:
+            log.exception("%s: countries(%s) failed", source.key, continent)
+            errors.append(exc)
+            continue
+        for c in countries:
+            seen = merged.get(c.slug)
+            merged[c.slug] = Country(c.slug, seen.name if seen else c.name, (seen.count if seen else 0) + c.count)
+    if errors and len(errors) == len(sources):
+        raise errors[0]
+    return sorted(merged.values(), key=lambda c: (-c.count, c.name))
 
 
 def continents_keyboard() -> InlineKeyboardMarkup:
@@ -342,23 +356,23 @@ async def ask_pets(target: Message, state: FSMContext, *, edit: bool) -> None:
     await _show(target, state, text, pets_keyboard(selected), edit=edit)
 
 
-async def ask_confirm(target: Message, state: FSMContext, sources, *, edit: bool) -> None:
+async def ask_confirm(target: Message, state: FSMContext, store: Store, sources, *, edit: bool) -> None:
     await state.set_state(NewSub.confirm)
     data = await state.get_data()
-    title = sources[data["source"]].title
-    text = f"📝 <b>Check your subscription</b> · {title}\n\n{describe_filter(_filter(data))}"
+    sites = ", ".join(sources[k].title for k in store.enabled_sources(target.chat.id, sources))
+    text = (
+        f"📝 <b>Check your subscription</b>\n\n{describe_filter(_filter(data))}\n"
+        f"🌐 Sites: {sites or 'none'} (change in /sites)"
+    )
     await _show(target, state, text, confirm_keyboard(), edit=edit)
 
 
-async def cmd_new(message: Message, state: FSMContext, sources) -> None:
+async def cmd_new(message: Message, state: FSMContext, store: Store, sources) -> None:
     await state.clear()
-    if len(sources) == 1:
-        # Only one site — nothing to ask; the step appears once there is a second source.
-        await state.update_data(source=next(iter(sources)))
-        await ask_continent(message, state, edit=False)
+    if not store.enabled_sources(message.chat.id, sources):
+        await message.answer(ALL_OFF)
         return
-    await state.set_state(NewSub.source)
-    await _show(message, state, "Which site?", sources_keyboard(sources), edit=False)
+    await ask_continent(message, state, edit=False)
 
 
 async def on_cancel(query: CallbackQuery, state: FSMContext) -> None:
@@ -367,29 +381,22 @@ async def on_cancel(query: CallbackQuery, state: FSMContext) -> None:
     await answer(query)
 
 
-async def on_source(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
-    if callback_data.value not in sources:
-        await answer(query, "Unknown site", show_alert=True)
-        return
-    await state.update_data(source=callback_data.value)
-    await ask_continent(query.message, state, edit=True)
-    await answer(query)
-
-
-async def on_continent(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
+async def on_continent(
+    query: CallbackQuery, callback_data: Pick, state: FSMContext, store: Store, sources
+) -> None:
     if callback_data.value not in CONTINENTS:
         await answer(query, "Unknown continent", show_alert=True)
         return
-    # Read the dialog before any network await: a /cancel meanwhile clears it.
-    source = sources.get((await state.get_data()).get("source"))
-    if source is None:
-        await answer(query, STALE, show_alert=True)
+    on = [sources[k] for k in store.enabled_sources(chat_id(query), sources)]
+    if not on:  # turned off in /sites since /new
+        await state.clear()
+        await answer(query)
+        await edit(query, ALL_OFF)
         return
     await answer(query, "Loading countries…")
     try:
-        countries = await source.countries(callback_data.value)
+        countries = await merged_countries(on, callback_data.value)
     except Exception:
-        log.exception("countries(%s) failed", callback_data.value)
         countries = None
     data = await state.get_data()
     if await state.get_state() != NewSub.continent.state or data.get("msg_id") != query.message.message_id:
@@ -518,24 +525,28 @@ async def on_pet_toggle(query: CallbackQuery, callback_data: Pick, state: FSMCon
     await answer(query)
 
 
-async def on_pets_done(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
+async def on_pets_done(
+    query: CallbackQuery, callback_data: Pick, state: FSMContext, store: Store, sources
+) -> None:
     if callback_data.value == ANY:
         await state.update_data(pets=[])
-    await ask_confirm(query.message, state, sources, edit=True)
+    await ask_confirm(query.message, state, store, sources, edit=True)
     await answer(query)
 
 
-async def on_save(query: CallbackQuery, state: FSMContext, store: Store, worker: Worker) -> None:
+async def on_save(query: CallbackQuery, state: FSMContext, store: Store, worker: Worker, sources) -> None:
     data = await state.get_data()
-    sub_id = store.add_subscription(chat_id(query), data["source"], _filter(data))
+    chat = chat_id(query)
+    sub_id = store.add_subscription(chat, _filter(data))
     await state.clear()
     await answer(query, "Saved")
-    await edit(
-        query,
-        f"💾 <b>Subscription #{sub_id} saved</b>\n\n{describe_filter(_filter(data))}\n\n"
+    next_step = (
         "⏳ Indexing current listings — I'll tell you when it's live, "
         "then message you only about new dates."
+        if store.enabled_sources(chat, sources)
+        else "💤 All sites are off for you, so it waits — turn one on in /sites."
     )
+    await edit(query, f"💾 <b>Subscription #{sub_id} saved</b>\n\n{describe_filter(_filter(data))}\n\n{next_step}")
     worker.wake()
 
 
@@ -545,7 +556,6 @@ def build_router() -> Router:
     router.callback_query.middleware(CurrentDialogOnly())
     router.message.register(cmd_new, Command("new"))
     router.callback_query.register(on_cancel, Pick.filter(F.step == "cancel"))
-    router.callback_query.register(on_source, NewSub.source, Pick.filter(F.step == "src"))
     router.callback_query.register(on_continent, NewSub.continent, Pick.filter(F.step == "cont"))
     router.callback_query.register(on_country_page, NewSub.country, Pick.filter(F.step == "cpage"))
     router.callback_query.register(on_country, NewSub.country, Pick.filter(F.step == "ctry"))

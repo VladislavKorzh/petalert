@@ -2,8 +2,8 @@
 
 Key decisions:
 
-* **Grouping.** Identical (source, filter) pairs across subscriptions share one
-  HTTP request.
+* **Grouping.** A subscription watches every site its chat has on. Identical
+  (site, filter) pairs across subscriptions share one HTTP request.
 * **Page 1 vs full crawl.** New listings, and new dates on most listings, show
   up at the top of the `published desc` feed, so the 100 newest are usually
   enough (THS publishes ~50 listings an hour worldwide). But an owner can add
@@ -15,9 +15,10 @@ Key decisions:
   with at most a few hundred results are crawled fully on every tick by the
   source itself. A watermark on `published` is deliberately not used: it is
   naive London time and breaks on DST.
-* **Baseline.** A new (or resumed) subscription first silently marks everything
-  that matches right now, and only then becomes `active`. Otherwise the first
-  tick would be hundreds of alerts about old listings.
+* **Baseline.** A subscription new on a site (new, resumed, or the site just
+  turned on) first silently marks everything that matches there right now, and
+  only then watches it. Otherwise the first tick would be hundreds of alerts
+  about old listings.
 * **Mark after sending.** A failed send is not lost: a later tick finds the
   same slot again (the next one, or the next full crawl if only that saw it).
 """
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from .db import Store, Subscription, utcnow
+from .db import Store, Subscription, Watch, utcnow
 from .models import Filter, Listing, Slot, appeared_after, listing_matches, matching_slots, slot_key
 from .sources.base import Source
 
@@ -73,9 +74,9 @@ class _Pending:
         self.subs[sub.id] = sub
         self.by_sub.setdefault(sub.id, {})[slot_key(self.listing, slot)] = slot
 
-    def keep(self, alive: set[int]) -> "_Pending | None":
-        """Only the subscriptions still alive; None if nothing is left."""
-        subs = {i: s for i, s in self.subs.items() if i in alive}
+    def keep(self, alive: set[tuple[int, str]]) -> "_Pending | None":
+        """Only the subscriptions still watching this site; None if nothing is left."""
+        subs = {i: s for i, s in self.subs.items() if (i, self.listing.source) in alive}
         if not subs:
             return None
         return _Pending(self.listing, subs, {i: self.by_sub[i] for i in subs})
@@ -99,6 +100,27 @@ class TickStats:
     sent: int = 0
     failed: int = 0
     full_crawl_new: int = 0  # new slots only a full crawl could see (beyond page 1)
+
+
+def _needs_baseline(watch: Watch) -> bool:
+    return not watch.baselined or watch.reindex
+
+
+def live_text(sub_id: int, sites: list[tuple[str, int]]) -> str:
+    """A subscription baselined on one or more sites in this tick."""
+    if len(sites) == 1:
+        ((title, n),) = sites
+        return (
+            f"✅ <b>Subscription #{sub_id} is live on {title}</b>\n\n"
+            f"🔎 {n} listings match right now — consider these already seen.\n"
+            "🔔 I'll message you as soon as new dates appear."
+        )
+    lines = "\n".join(f"• {title}: {n} listings" for title, n in sites)
+    return (
+        f"✅ <b>Subscription #{sub_id} is live</b>\n\n"
+        f"🔎 Matching right now — consider these already seen:\n{lines}\n"
+        "🔔 I'll message you as soon as new dates appear."
+    )
 
 
 class Worker:
@@ -167,17 +189,23 @@ class Worker:
         except Exception:
             log.exception("failed to message the admin: %s", text)
 
+    def _complete(self, source_key: str) -> bool:
+        """A source whose every search is complete (one page is the whole site)."""
+        return getattr(self.sources.get(source_key), "always_complete", False)
+
     def _full_groups(
-        self, groups: dict[tuple[str, str], list[Subscription]], now: datetime
+        self, groups: dict[tuple[str, str], list[Watch]], now: datetime
     ) -> tuple[set, set]:
         """Groups to crawl fully this tick: every baseline, plus the most
         overdue scheduled ones (a crawl of a broad filter is 20+ requests).
         Also returns the overdue groups left for later, so a page-1 tick
         doesn't clear their pending catch-up."""
-        full = {g for g, subs in groups.items() if any(s.status == "baselining" for s in subs)}
+        full = {g for g, watches in groups.items() if any(_needs_baseline(w) for w in watches)}
         oldest = datetime.min.replace(tzinfo=now.tzinfo)
         overdue = []
         for group in groups.keys() - full:
+            if self._complete(group[0]):
+                continue  # always full anyway; it mustn't take a scheduled slot
             last_ok, last_full = self.store.query_state(*group)
             if (
                 last_full is None
@@ -198,27 +226,29 @@ class Worker:
         now = self.clock()
         today = now.date()
         stats = TickStats()
-        groups: dict[tuple[str, str], list[Subscription]] = {}
+        groups: dict[tuple[str, str], list[Watch]] = {}
+        baselines = self.store.watches()
         for sub in self.store.due_subscriptions():
             if sub.filter.date_to and sub.filter.date_to <= today:
                 await self._expire(sub)
                 continue
-            groups.setdefault(sub.group, []).append(sub)
+            for source_key in self.store.enabled_sources(sub.chat_id, self.sources):
+                watch = Watch(sub, source_key, *baselines.get((sub.id, source_key), (None, None, False)))
+                groups.setdefault(watch.group, []).append(watch)
         if only_baselining:
-            groups = {k: v for k, v in groups.items() if any(s.status == "baselining" for s in v)}
+            groups = {k: v for k, v in groups.items() if any(_needs_baseline(w) for w in v)}
 
         pending: dict[int, dict[tuple[str, str], _Pending]] = {}
+        live: dict[int, tuple[Subscription, list[tuple[str, int]]]] = {}  # baselines finished
         failures: dict[str, Exception] = {}
         succeeded: set[str] = set()
         full_groups, deferred = self._full_groups(groups, now)
-        for (source_key, filter_json), subs in groups.items():
-            source = self.sources.get(source_key)
-            if source is None:
-                log.error("unknown source %r in subscriptions %s", source_key, [s.id for s in subs])
-                continue
+        for (source_key, filter_json), watches in groups.items():
+            source = self.sources[source_key]
             flt = Filter.from_json(filter_json)
             group = (source_key, filter_json)
-            full = group in full_groups
+            complete = self._complete(source_key)
+            full = group in full_groups or complete
             partial = False  # page 1 instead of a failed full crawl: no baselines from it
             stats.groups += 1
             stats.full += full
@@ -228,7 +258,7 @@ class Worker:
                 log.warning("%s %s: %r", source_key, filter_json, exc)
                 failures[source_key] = exc
                 stats.failed += 1
-                if not full:
+                if not full or complete:
                     continue
                 # A failing full crawl must not also stop the page-1 alerts.
                 self._full_attempt[group] = now
@@ -259,25 +289,25 @@ class Worker:
                 log.warning("%s %s: local filter dropped %d of %d", source_key, filter_json, dropped, len(listings))
 
             watermark = max((s.seq for l in listings for s in l.slots if s.seq is not None), default=None)
-            for sub in subs:
+            for watch in watches:
+                sub = watch.sub
                 known = self.store.delivered_keys(sub.id)
                 fresh = [(l, s) for l, s in matches if slot_key(l, s) not in known]
-                if sub.status == "baselining":
+                if _needs_baseline(watch):
                     if partial:
                         continue  # a baseline needs the full crawl; retried next tick
                     keys = [(slot_key(l, s), s.end) for l, s in fresh]
-                    if self.store.finish_baseline(sub, keys, watermark=watermark, at=now):
+                    if watch.reindex:  # quiet: no "is live" message, the baseline time stays
+                        if self.store.finish_reindex(sub, source_key, keys):
+                            log.info("#%d: re-indexed %s, %d slots marked seen", sub.id, source_key, len(keys))
+                        continue
+                    if self.store.finish_baseline(sub, source_key, keys, watermark=watermark, at=now):
                         n = len({l.id for l, _ in matches})
-                        await self._text(
-                            sub.chat_id,
-                            f"✅ <b>Subscription #{sub.id} is live</b>\n\n"
-                            f"🔎 {n} listings match right now — consider these already seen.\n"
-                            "🔔 I'll message you as soon as new dates appear.",
-                        )
+                        live.setdefault(sub.id, (sub, []))[1].append((source_key, n))
                     continue
                 # Unseen but old (the baseline missed it, or it just came into
                 # reach): note it silently instead of alerting.
-                old = [(l, s) for l, s in fresh if not appeared_after(l, s, sub.baseline_at, sub.watermark)]
+                old = [(l, s) for l, s in fresh if not appeared_after(l, s, watch.baseline_at, watch.watermark)]
                 if old:
                     self.store.mark_delivered(sub, [(slot_key(l, s), s.end) for l, s in old])
                     log.info("#%d: %d old slots seen for the first time, not alerted", sub.id, len(old))
@@ -289,15 +319,27 @@ class Worker:
                 for listing, slot in fresh:
                     chat.setdefault((listing.source, listing.id), _Pending(listing)).add(sub, slot)
 
-        # The searches took a while; drop subscriptions paused or deleted meanwhile.
-        alive = self.store.still_active(
-            sub for items in pending.values() for item in items.values() for sub in item.subs.values()
+        # Only to those still watching: a pause or a site off meanwhile wins.
+        watching = self.store.still_watching(
+            (sub, key) for sub, sites in live.values() for key, _ in sites
+        )
+        for sub, sites in live.values():
+            sites = [(self.sources[key].title, n) for key, n in sites if (sub.id, key) in watching]
+            if sites:
+                await self._text(sub.chat_id, live_text(sub.id, sites))
+        # The searches took a while; drop subscriptions paused, deleted or with
+        # the site turned off meanwhile.
+        alive = self.store.still_watching(
+            (sub, item.listing.source)
+            for items in pending.values() for item in items.values() for sub in item.subs.values()
         )
         for chat_id, items in pending.items():
             kept = [p for p in (item.keep(alive) for item in items.values()) if p]
             if kept:
                 stats.sent += await self._deliver(chat_id, kept)
-        await self._health(failures, succeeded)
+        if not only_baselining:
+            # A wake tick is extra: it must not count towards (or reset) a streak.
+            await self._health(failures, succeeded)
         log.info(
             "tick%s: groups=%d full=%d listings=%d fresh=%d sent=%d failed=%d full_crawl_new=%d",
             " (baseline)" if only_baselining else "", stats.groups, stats.full, stats.listings,
@@ -308,7 +350,7 @@ class Worker:
     async def _expire(self, sub: Subscription) -> None:
         """A date window in the past can't match anything any more: stop polling
         for it (each request costs proxy traffic) and tell the user once."""
-        if self.store.transition(sub.id, sub.chat_id, "paused", allowed_from=("active", "baselining")):
+        if self.store.pause(sub.id, sub.chat_id):
             await self._text(
                 sub.chat_id,
                 f"⌛ <b>Subscription #{sub.id} has ended</b>\n\n"
