@@ -33,6 +33,13 @@ def test_the_users_example():
     [
         ("eu 30.11.2026", d(30, 11), d(30, 11)),  # no margin: that day
         ("eu ±3 30.11.2026", d(27, 11), d(3, 12)),
+        ("eu(-uk), +5, 30.11.2026", d(30, 11), d(5, 12)),  # only after
+        ("eu -2 30.11.2026", d(28, 11), d(30, 11)),  # only before
+        ("eu +5 -2 30.11.2026", d(28, 11), d(5, 12)),
+        ("eu +5 days 30.11.2026 -", d(30, 11), None),
+        ("eu 1.12 - 20.12 +5", d(1, 12), d(25, 12)),
+        ("eu 1.12 -20.12", d(1, 12), d(20, 12)),  # a range, not a margin of 20
+        ("eu 2026-11-30 +2", d(30, 11), d(2, 12)),  # the ISO date's dashes stay dates
         ("eu +/-3 2026-11-30", d(27, 11), d(3, 12)),
         ("eu 30/11/2026 +- 3 days", d(27, 11), d(3, 12)),
         ("eu, -+2, 30.11.2026 –", d(28, 11), None),
@@ -103,7 +110,9 @@ def test_open_end_dash_is_not_an_exclusion():
         ("eu 1.10.2026 - 10.10.2026", "have passed"),
         ("eu 18.10.2026", "have passed"),  # today
         ("eu ±31 30.11.2026", "at most 30"),
-        ("eu ±3 ±4 30.11.2026", "one ± margin"),
+        ("eu +31 30.11.2026", "at most 30"),
+        ("eu ±3 ±4 30.11.2026", "One margin per side"),
+        ("eu ±3 +2 30.11.2026", "One margin per side"),
         ("- 30.11.2026 pt", "lone '-'"),  # not "everywhere except Portugal"
         ("eu - uk 30.11.2026", "lone '-'"),
         ("eu 30.11.2026 -uk -", "lone '-'"),

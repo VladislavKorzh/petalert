@@ -31,9 +31,10 @@ log = logging.getLogger(__name__)
 
 SEARCH_HELP = (
     "🔎 <b>Search open sits by start date</b>\n"
-    "Send places, dates and an optional ± margin in days:\n"
+    "Send places, dates and an optional margin in days:\n"
     "• <code>eu(-uk) ±3 30.11.2026</code> — Europe without the UK, starting 27 Nov – 3 Dec\n"
-    "• <code>eu(-uk) ±3 30.11.2026 -</code> — the same, starting 27 Nov or later\n"
+    "• <code>eu(-uk) +5 30.11.2026</code> — starting 30 Nov – 5 Dec (<code>-2</code>: 28 – 30 Nov)\n"
+    "• <code>eu(-uk) ±3 30.11.2026 -</code> — starting 27 Nov or later\n"
     "• <code>pt, es, 1.12.2026 - 20.12.2026</code> — Portugal or Spain, starting in that range\n\n"
     "🌍 Places: <code>eu</code>, <code>asia</code>, <code>africa</code>, <code>oceania</code>, "
     "<code>north america</code>, <code>south america</code>; countries by code "

@@ -101,6 +101,7 @@ opens the card:
 | Query | Finds sits starting |
 |---|---|
 | `eu(-uk), ±3, 30.11.2026` | in Europe except the UK, 27 Nov – 3 Dec |
+| `eu(-uk), +5, 30.11.2026` | the same, 30 Nov – 5 Dec (`-2`: 28 – 30 Nov; `+5 -2` both) |
 | `eu(-uk), ±3, 30.11.2026 -` | the same, from 27 Nov on (nearest first) |
 | `pt, es, 1.12 - 20.12` | in Portugal or Spain, 1 – 20 Dec (no year: the next one) |
 | `north america 2026-12-01` | in North America on 1 Dec |
@@ -109,8 +110,9 @@ opens the card:
   `south america`; countries by ISO code (`pt`, `uk` = `gb`) or name;
   `-xx` (also inside `eu(…)`) leaves a country out. No place = anywhere.
   Matching is by the listing's country code, which both sites give.
-- `±N` (`+-N`, `+/-N`, up to 30) widens the range of start dates on both
-  sides; how long a sit lasts doesn't matter. A search starts from tomorrow.
+- `±N` (`+-N`, `+/-N`) widens the range of start dates on both sides, `+N`
+  only after, `-N` only before (up to 30 days each); how long a sit lasts
+  doesn't matter. A search starts from tomorrow.
 - At most 100 sits, nearest start first; the reply says when there are more.
 
 THS has a "Start date" sort (`SIT_START_DATE`, found in the site's JS), so a

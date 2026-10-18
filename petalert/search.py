@@ -1,11 +1,12 @@
 """/search: open sits by start date, across the sites a chat has on.
 
     eu(-uk), ±3, 30.11.2026      Europe without the UK, starting 27 Nov – 3 Dec
-    eu(-uk), ±3, 30.11.2026 -    the same, starting 27 Nov or later
+    eu(-uk), +5, 30.11.2026      starting 30 Nov – 5 Dec (-2 would be 28 – 30 Nov)
+    eu(-uk), ±3, 30.11.2026 -    starting 27 Nov or later
     pt, es, 1.12 - 20.12         Portugal or Spain, starting in that range
 
-Dates are a range of START dates (± widens it on both sides); how long a sit
-lasts doesn't matter. The range begins tomorrow at the earliest: a sit
+Dates are a range of START dates (±N widens it on both sides, +N only after,
+-N only before); how long a sit lasts doesn't matter. The range begins tomorrow at the earliest: a sit
 starting today is too late to apply for (and THS doesn't keep today's starts
 in its start-date order). Places are matched on the listing's ISO country code,
 which both sites give (`geo` knows each code's continent).
@@ -34,9 +35,15 @@ from .sources.base import Source, TooBroad
 log = logging.getLogger(__name__)
 
 MAX_RESULTS = 100  # listings in one result: 10 pages of the table, nearest first
-MAX_FLEX = 30  # days
+MAX_FLEX = 30  # days, on either side
 
-_FLEX = re.compile(r"(?:±|\+\s*/?\s*-|-\s*/?\s*\+)\s*(\d{1,3})(?:\s*d(?:ays?)?\b)?", re.IGNORECASE)
+# ±3 / +-3 / +/-3 (both sides), +5 (after), -2 (before). A minus right before
+# the number only, not inside a date (2026-11-30) or a range (1.12 -20.12).
+_FLEX = re.compile(
+    r"(?:(?P<both>±|\+\s*/?\s*[-−]|[-−]\s*/?\s*\+)\s*|(?P<after>\+)\s*|(?<![\w.])(?P<before>[-−]))"
+    r"(?P<days>\d{1,3})(?![\d.])(?:\s*d(?:ays?)?\b)?",
+    re.IGNORECASE,
+)
 # 2026-11-30, 30.11.2026, 30/11/2026, 30.11 or 30.11. (no year: see _resolve)
 _DATE = re.compile(
     r"(?<![\d.])(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?)(?!\d)(?!\.\d)\.?"
@@ -44,7 +51,7 @@ _DATE = re.compile(
 _RANGE = re.compile(r"\s*(?:[-–—]|to|till|until)?\s*", re.IGNORECASE)  # between two dates
 _OPEN_END = re.compile(r"[\s,]*[-–—](?![a-z])", re.IGNORECASE)  # "30.11.2026 -", but not "30.11.2026 -uk"
 _DASHES = "-–—"
-HELP_FORMAT = "Dates look like 30.11.2026, a margin like ±3."
+HELP_FORMAT = "Dates look like 30.11.2026, a margin like ±3, +5 or -2."
 LONE_DASH = (
     "Can't read a lone '-'. A range of starts is 1.12.2026 - 20.12.2026, \"from then on\" is "
     "30.11.2026 -, and -uk leaves a country out."
@@ -118,7 +125,7 @@ def _date(day: int, month: int, year: int, raw: re.Match) -> date:
         raise ValueError(f"The date {raw.group(0).rstrip('.')} doesn't exist. Check day and month.") from None
 
 
-def _resolve(matches: list[re.Match], today: date, margin: timedelta, open_end: bool) -> tuple[date, date | None]:
+def _resolve(matches: list[re.Match], today: date, after: timedelta, open_end: bool) -> tuple[date, date | None]:
     """The (first, last) start dates, filling in missing years. A date without
     one is taken in the year that puts it nearest to today, the other date of
     a range in a year that keeps the range in order — and if a range without
@@ -141,7 +148,7 @@ def _resolve(matches: list[re.Match], today: date, margin: timedelta, open_end: 
     dates = [_date(d, m, y, raw) for (d, m, _), y, raw in zip(parts, years, matches)]
     yearless = [y is None for _, _, y in parts]
     end = dates[-1] if not open_end else None
-    if end is not None and end + margin <= today and all(yearless):
+    if end is not None and end + after <= today and all(yearless):
         dates = [_date(d.day, d.month, d.year + 1, raw) for d, raw in zip(dates, matches)]
     first, last = dates[0], (None if open_end else dates[-1])
     if last is not None and last < first:
@@ -149,7 +156,7 @@ def _resolve(matches: list[re.Match], today: date, margin: timedelta, open_end: 
     return first, last
 
 
-def _dates(text: str, today: date, margin: timedelta) -> tuple[date | None, date | None, list[tuple[int, int]]]:
+def _dates(text: str, today: date, after: timedelta) -> tuple[date | None, date | None, list[tuple[int, int]]]:
     """(lowest start, highest start, the parsed spans) — before ±; None: open."""
     matches = list(_DATE.finditer(text))
     if len(matches) > 2:
@@ -165,7 +172,7 @@ def _dates(text: str, today: date, margin: timedelta) -> tuple[date | None, date
     elif dash := _OPEN_END.match(text, matches[0].end()):
         spans.append(dash.span())
         open_end = True
-    first, last = _resolve(matches, today, margin, open_end)
+    first, last = _resolve(matches, today, after, open_end)
     return first, last, spans
 
 
@@ -212,24 +219,27 @@ def _places(text: str) -> tuple[list[str], list[str], list[str]]:
 def parse(text: str, today: date) -> Search:
     """A query like `eu(-uk), ±3, 30.11.2026 -`. The ValueError message is
     meant for the user."""
+    margins: dict[str, int] = {}  # days "before" and "after" the dates
     flexes = list(_FLEX.finditer(text))
-    if len(flexes) > 1:
-        raise ValueError("Give one ± margin, e.g. ±3.")
-    flex = int(flexes[0].group(1)) if flexes else 0
-    if flex > MAX_FLEX:
-        raise ValueError(f"The ± margin can be at most {MAX_FLEX} days.")
+    for m in flexes:
+        sides = ("before", "after") if m["both"] else ("before",) if m["before"] else ("after",)
+        if any(side in margins for side in sides):
+            raise ValueError("One margin per side: ±3, or +5 and -2.")
+        if int(m["days"]) > MAX_FLEX:
+            raise ValueError(f"A margin can be at most {MAX_FLEX} days.")
+        margins.update(dict.fromkeys(sides, int(m["days"])))
+    before, after = (timedelta(days=margins.get(side, 0)) for side in ("before", "after"))
     text = _blank(text, [m.span() for m in flexes])
-    margin = timedelta(days=flex)
-    first, last, spans = _dates(text, today, margin)
+    first, last, spans = _dates(text, today, after)
     earliest = today + timedelta(days=1)
-    start_to = last + margin if last else None
+    start_to = last + after if last else None
     if start_to is not None and start_to < earliest:
         raise ValueError("These start dates have passed (a search starts from tomorrow).")
     continents, countries, exclude = _places(_blank(text, spans))
     if not continents and not countries:
         continents = list(CONTINENTS)  # anywhere
     return Search(
-        start_from=max(first - margin, earliest) if first else earliest,
+        start_from=max(first - before, earliest) if first else earliest,
         start_to=start_to,
         continents=tuple(continents),
         countries=tuple(countries),
