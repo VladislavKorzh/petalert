@@ -19,8 +19,8 @@ needed for either:
   range not on the site when you subscribed counts as new — including edited
   dates.
 - One new sit arrives as a card with a photo; several at once as one table
-  (dates, days, place; nearest dates first), where a number opens the card in
-  the same message and ◀ ▶ flip through them.
+  (dates, days, place; nearest dates first), where a number opens the listing
+  on its site and ◀ ▶ flip the pages.
 - `/search` for what is open now, by start date — see [Search](#search).
 - Multiple users, each with their own subscriptions (`/new`, `/list`) and sites (`/sites`).
 - Access via single-use invite codes.
@@ -96,7 +96,7 @@ You can find your `user_id` via @userinfobot. Admins listed in
 
 `/search` (or just a message with a date in it) lists the open sits by **start
 date** on the sites you have on, as the same table as the alerts — a number
-opens the card:
+opens the sit on its site:
 
 | Query | Finds sits starting |
 |---|---|

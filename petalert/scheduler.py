@@ -369,7 +369,7 @@ class Worker:
 
     async def _deliver(self, chat_id: int, items: list[_Pending]) -> int:
         """One new listing: its photo card. More: one table message, nearest
-        dates first, each row opening the card (bot/browse.py)."""
+        dates first, each number opening the listing on its site (bot/browse.py)."""
         items = sorted(items, key=_Pending.order)
         batch = items[:MAX_LIST]
         if len(items) > MAX_LIST:

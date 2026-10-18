@@ -175,7 +175,7 @@ def render_table(
         [
             header,
             "<pre>" + "\n".join(rows) + "</pre>",
-            "👇 Tap a number for details",
+            "👇 Tap a number to open it on the site",
         ]
     )
 

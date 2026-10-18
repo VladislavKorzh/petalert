@@ -27,7 +27,7 @@ HELP = (
     "✖️ /cancel — abort the current dialog\n\n"
     "ℹ️ New dates on an existing listing count as new too. "
     "Sites are checked about every 30 minutes; several new sits at once "
-    "arrive as one table — tap a number for the details."
+    "arrive as one table — tap a number to open the sit on its site."
 )
 
 SITES_HELP = (

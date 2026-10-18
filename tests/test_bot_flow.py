@@ -332,7 +332,16 @@ def edits(calls) -> list[EditMessageText]:
     return [c for c in calls if isinstance(c, EditMessageText)]
 
 
-def test_table_number_opens_the_card_in_place_with_the_photo(h):
+def test_table_numbers_open_the_sits_on_their_site(h):
+    list_id = table(h, 13)
+    (page2,) = edits(h.press(Browse(list_id=list_id, view="page", n=1)))
+    numbers = page2.reply_markup.inline_keyboard[0]
+    assert [(b.text, b.url, b.callback_data) for b in numbers] == [
+        ("11", "https://x/l/10/", None), ("12", "https://x/l/11/", None), ("13", "https://x/l/12/", None)
+    ]
+
+
+def test_card_buttons_of_older_tables_still_open_the_card_in_place(h):
     list_id = table(h, 3)
     (card,) = edits(h.press(Browse(list_id=list_id, view="card", n=1)))
     assert card.text.startswith("🏡 <b>Sit 1</b>")
@@ -359,8 +368,8 @@ def test_table_pages(h):
     rows = page2.reply_markup.inline_keyboard
     assert [b.text for b in rows[0]] == ["11", "12", "13"]
     assert [b.text for b in rows[-1]] == ["◀", "2/2", "▶"]
-    # Back from card 12 lands on page 2
-    (card,) = edits(h.press(Browse.unpack(rows[0][1].callback_data)))
+    # Back from card 12 (an older table's button) lands on page 2
+    (card,) = edits(h.press(Browse(list_id=list_id, view="card", n=11)))
     assert Browse.unpack(card.reply_markup.inline_keyboard[1][0].callback_data).n == 1
     # the page counter button does nothing
     calls = h.press(Browse(list_id=list_id, view="noop"))
@@ -527,7 +536,7 @@ def sit(lid: str, code: str, start: date, photo: str | None = None) -> Listing:
     )
 
 
-def test_search_answers_with_a_table_whose_numbers_open_cards(h):
+def test_search_answers_with_a_table_whose_numbers_open_the_sites(h):
     h.source.start_pages = [
         [sit("1", "gb", date(Y, 11, 28)), sit("2", "pt", date(Y, 12, 1), "https://img/2.jpg"),
          sit("3", "fr", date(Y, 11, 29)), sit("4", "es", date(Y, 12, 9))],
@@ -541,13 +550,7 @@ def test_search_answers_with_a_table_whose_numbers_open_cards(h):
     )
     assert " 1 29.11–10.01" in table.text and "FR Town3" in table.text and "GB" not in table.text
     numbers = table.reply_markup.inline_keyboard[0]
-    assert [b.text for b in numbers] == ["1", "2"]
-
-    (card,) = edits(h.press(Browse.unpack(numbers[1].callback_data)))
-    assert card.text.startswith("🏡 <b>Sit 2</b>") and "🗓 <b>Open date:</b>" in card.text
-    assert card.text.endswith("🌐 TrustedHousesitters") and card.link_preview_options.url == "https://img/2.jpg"
-    (back,) = edits(h.press(Browse.unpack(card.reply_markup.inline_keyboard[1][0].callback_data)))
-    assert back.text == table.text
+    assert [(b.text, b.url) for b in numbers] == [("1", "https://x/l/3/"), ("2", "https://x/l/2/")]
 
 
 def test_bare_search_explains_and_takes_the_next_message(h):

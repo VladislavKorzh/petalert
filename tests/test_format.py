@@ -96,7 +96,7 @@ def test_table_layout():
         " 2 09.12–09.01  31 🇫🇷 FR Villefran…\n"
         "   05.02–20.02  15\n"
         " 3 01.03–01.06  92 📍 &lt;Odd &amp; Co&gt;</pre>\n"
-        "👇 Tap a number for details"
+        "👇 Tap a number to open it on the site"
     )
 
 

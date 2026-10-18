@@ -2,11 +2,13 @@
 
 A tick that finds more than one new listing for a chat sends them as one table
 (nearest dates first) instead of a stream of photo cards; /search answers with
-the same kind of table. A number opens that listing's card in the same
-message, ◀ ▶ flip through the cards, and "Back to the list" returns to the
-table. What a table shows is stored with it (`alert_list`), so the buttons work
-without asking the site again: a card is the sit as it was when alerted (or
-found), and "Open on …" has the live page.
+the same kind of table. A number opens that listing on its site (a URL
+button); ◀ ▶ flip the pages of a long table. What a table shows is stored with
+it (`alert_list`), so its pages turn without asking the site again.
+
+In tables sent by earlier versions a number opens the listing's card in the
+same message instead (◀ ▶ flip through the cards, "Back to the list" returns):
+those buttons keep working until their table expires (ALERT_LIST_TTL).
 """
 
 from __future__ import annotations
@@ -108,7 +110,10 @@ def list_message(
     items: list[Item], list_id: int, page: int = 0, header: str | None = None
 ) -> tuple[str, InlineKeyboardMarkup]:
     first = page * PAGE_SIZE
-    numbers = [_button(str(n + 1), list_id, "card", n) for n in range(first, min(first + PAGE_SIZE, len(items)))]
+    numbers = [
+        InlineKeyboardButton(text=str(n + 1), url=items[n].listing.url)
+        for n in range(first, min(first + PAGE_SIZE, len(items)))
+    ]
     rows = [numbers[i : i + NUMBERS_PER_ROW] for i in range(0, len(numbers), NUMBERS_PER_ROW)]
     if pages(len(items)) > 1:
         rows.append(_nav(list_id, "page", page, pages(len(items))))
@@ -118,9 +123,9 @@ def list_message(
 def card_message(
     items: list[Item], list_id: int, n: int, source_titles: dict[str, str]
 ) -> tuple[str, InlineKeyboardMarkup, LinkPreviewOptions]:
-    """The alert card of item `n`. The message stays a text message (an edit
-    can't turn it into a photo), so the photo is a large link preview above
-    the text."""
+    """The alert card of item `n` (the number buttons of older tables). The
+    message stays a text message (an edit can't turn it into a photo), so the
+    photo is a large link preview above the text."""
     listing, slots, sub_ids = items[n]
     text, open_button = render_alert(
         listing, slots, sub_ids, source_titles.get(listing.source, listing.source), limit=TEXT_LIMIT

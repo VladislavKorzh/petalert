@@ -1,5 +1,5 @@
 """/search in the bot: the query (petalert/search.py), then a table of results
-that works like an alert table (bot/browse.py) — a number opens the card.
+that works like an alert table (bot/browse.py) — a number opens the sit on its site.
 
 `/search <query>` searches right away; a bare `/search` explains the format and
 takes the next message as the query. Plain text with a date in it, outside any
