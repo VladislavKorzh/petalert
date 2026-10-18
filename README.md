@@ -21,6 +21,7 @@ needed for either:
 - One new sit arrives as a card with a photo; several at once as one table
   (dates, days, place; nearest dates first), where a number opens the card in
   the same message and ◀ ▶ flip through them.
+- `/search` for what is open now, by start date — see [Search](#search).
 - Multiple users, each with their own subscriptions (`/new`, `/list`) and sites (`/sites`).
 - Access via single-use invite codes.
 - Filters: continent, country (or "all except…"), a date window (the sit must
@@ -52,6 +53,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 | File | Purpose |
 |---|---|
 | `petalert/models.py` | `Filter`, `Listing`, `Slot`, local filtering (authoritative; the API filter is only an optimization) |
+| `petalert/search.py` | `/search`: the query, reading the sites by start date (`Source.by_start`) |
+| `petalert/geo.py` | ISO country codes → names and continents (as THS groups them) |
 | `petalert/sources/ths.py` | THS query and parsing, `api-version` self-healing on 406 |
 | `petalert/sources/mmh.py` | MindMyHouse page parsing, its country → continent table |
 | `petalert/http.py` | retries, backoff, proxy, at most one request every 2 s |
@@ -60,7 +63,7 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 | `petalert/bot/` | dialog, management, access gate, message texts, sending |
 
 **Adding a site:** a module in `petalert/sources/` implementing `Source`
-(`countries`, `search` → normalized `Listing`s), plus a line in `REGISTRY`.
+(`countries`, `search`, `by_start` → normalized `Listing`s), plus a line in `REGISTRY`.
 Every subscription then watches it (indexing it silently first), and users can
 turn it off in `/sites`. A site whose one search returns everything sets
 `always_complete = True`, so the worker schedules no extra full crawls for it.
@@ -78,6 +81,7 @@ uv run python -m petalert.sources countries --continent europe
 uv run python -m petalert.sources search --continent europe --country portugal --min-days 14
 uv run python -m petalert.sources search --continent europe --exclude united-kingdom
 uv run python -m petalert.sources --source mmh search --continent europe
+uv run python -m petalert search "eu(-uk), ±3, 30.11.2026 -"   # what /search finds
 
 uv run python -m petalert codes generate 5   # codes + deep links t.me/<bot>?start=<code>
 POLL_INTERVAL_MIN=1 uv run python -m petalert
@@ -87,6 +91,35 @@ Use a **separate dev bot token** locally: two processes polling the same token
 fight over updates (`TelegramConflictError`), and both would send alerts.
 You can find your `user_id` via @userinfobot. Admins listed in
 `ADMIN_USER_IDS` get in without a code.
+
+## Search
+
+`/search` (or just a message with a date in it) lists the open sits by **start
+date** on the sites you have on, as the same table as the alerts — a number
+opens the card:
+
+| Query | Finds sits starting |
+|---|---|
+| `eu(-uk), ±3, 30.11.2026` | in Europe except the UK, 27 Nov – 3 Dec |
+| `eu(-uk), ±3, 30.11.2026 -` | the same, from 27 Nov on (nearest first) |
+| `pt, es, 1.12 - 20.12` | in Portugal or Spain, 1 – 20 Dec (no year: the next one) |
+| `north america 2026-12-01` | in North America on 1 Dec |
+
+- Places: `eu`/`europe`, `asia`, `africa`, `oceania`, `north america`,
+  `south america`; countries by ISO code (`pt`, `uk` = `gb`) or name;
+  `-xx` (also inside `eu(…)`) leaves a country out. No place = anywhere.
+  Matching is by the listing's country code, which both sites give.
+- `±N` (`+-N`, `+/-N`, up to 30) widens the range of start dates on both
+  sides; how long a sit lasts doesn't matter. A search starts from tomorrow.
+- At most 100 sits, nearest start first; the reply says when there are more.
+
+THS has a "Start date" sort (`SIT_START_DATE`, found in the site's JS), so a
+search reads one continent or country nearest-start first and stops once it is
+past the range or has 100 matches — usually one or two pages (~110 KB each
+through the proxy), not a crawl. Plain page numbers reach 1000 listings; a
+search that needs more says so. If THS ever stops honouring the sort, the
+search reports THS as failed and the admin hears about it. MindMyHouse answers
+from its cached page.
 
 ## Invite codes
 

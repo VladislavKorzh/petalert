@@ -8,7 +8,7 @@ about the specific site.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol
 
 from ..models import Country, Filter, Listing
@@ -19,6 +19,10 @@ Notice = Callable[[str], Awaitable[None]]
 
 class SourceError(Exception):
     """The source didn't respond as expected: status, format, request requirements."""
+
+
+class TooBroad(SourceError):
+    """A search the site can't answer in full; the message is for the user."""
 
 
 class Source(Protocol):
@@ -39,4 +43,12 @@ class Source(Protocol):
         on effort: at least the newest `max_pages` pages, and a source may
         return more when fetching everything is cheap.
         """
+        ...
+
+    def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
+        """For /search: listings in the filter's place with an open slot
+        starting on or after `flt.date_from`, ordered by the first such start
+        (nearest first), a page at a time. The caller stops reading once it is
+        past its dates, and filters locally: a page may hold more than asked
+        (another country of the continent, say). An async generator."""
         ...

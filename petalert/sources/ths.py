@@ -19,15 +19,15 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..http import Http
-from ..models import Country, Filter, Listing, Slot
-from .base import Notice, SourceError
+from ..models import Country, Filter, Listing, Slot, first_open_start
+from .base import Notice, SourceError, TooBroad
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +56,11 @@ FAR_FUTURE = "2100-01-01T00:00:00"  # a cursor that keeps every dated listing
 # says: it costs at most a few requests and catches dates added to old listings
 # without a `published` bump (rare, but it happens).
 SMALL_TOTAL = 300
+# The search page's "Start date" sort (its sort menu, from the JS bundle,
+# 2026-10-18): listings ordered by their first open slot starting on or after
+# `dateFrom`. Verified live on 400 European listings, with and without
+# `dateTo`: not one out of order. /search relies on it to stop early.
+START_SORT = [{"function": {"name": "SIT_START_DATE", "order": "asc"}}]
 LONDON = ZoneInfo("Europe/London")  # `published` is naive local time of the site
 _VERSION_RE = re.compile(r'"apiVersion":"([0-9]{4}-[0-9]{2}-[0-9]{2})"')
 
@@ -67,6 +72,7 @@ def build_query(
     published_before: str | None = None,
     page: int = 1,
     facets: tuple[str, ...] = (),
+    sort: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     assignments: dict[str, Any] = {
         "confirmed": False,
@@ -97,7 +103,7 @@ def build_query(
     return {
         "filters": filters,
         "facets": list(facets),
-        "sort": [{"published": "desc"}],
+        "sort": sort or [{"published": "desc"}],
         "page": page,
         "resultsPerPage": PER_PAGE,
         "debug": False,
@@ -166,12 +172,13 @@ class TrustedHousesitters:
         api_version: str | None,
         *,
         notice: Notice | None = None,
-        clock: Callable[[], date] = date.today,
+        clock: Callable[[], date] = lambda: datetime.now(LONDON).date(),  # the site's today
     ):
         self.http = http
         self.api_version = api_version
         self._notice = notice
         self._clock = clock
+        self._sort_told = False  # the admin hears once, not on every /search
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -236,9 +243,10 @@ class TrustedHousesitters:
         *,
         refresh: bool = False,
         page: int = 1,
+        sort: list[dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Fetch one page into `seen`; returns the raw results and the total."""
-        data = await self._query(build_query(flt, today, published_before=before, page=page))
+        data = await self._query(build_query(flt, today, published_before=before, page=page, sort=sort))
         try:
             results, total = data["results"], int(data["total"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -308,6 +316,34 @@ class TrustedHousesitters:
             # (≤ 100 results all came on page 1, undated ones included)
             await self._undated(flt, today, seen, first_total, first_total - len(dated))
         return list(seen.values())
+
+    async def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
+        """Listings with an open slot from `flt.date_from` on, nearest first
+        (START_SORT), a page at a time, for /search — which stops reading once
+        it is past its dates, usually after a page or two. Plain page numbers,
+        so at most RESULT_LIMIT listings. From tomorrow at the earliest: THS
+        puts slots starting today among tomorrow's (seen live 2026-10-18)."""
+        today = self._clock()
+        since = max(today + timedelta(days=1), flt.date_from or today)
+        flt = replace(flt, date_from=since)
+        seen: dict[str, Listing] = {}
+        last = since
+        for page in range(1, RESULT_LIMIT // PER_PAGE + 1):
+            known = set(seen)
+            results, total = await self._page(flt, today, None, seen, page=page, sort=START_SORT)
+            keyed = [(first_open_start(l, since), l) for i, l in seen.items() if i not in known]
+            keys = [k for k, _ in keyed if k is not None]  # (none: no open slot after all)
+            if any(a > b for a, b in zip([last, *keys], keys)):
+                # The caller's early stop would silently cut results short.
+                if not self._sort_told:
+                    self._sort_told = True
+                    await self._tell("THS no longer sorts by start date: /search fails for THS until fixed.")
+                raise SourceError("THS ignores the start-date sort")
+            last = keys[-1] if keys else last
+            yield [l for k, l in keyed if k is not None]
+            if len(results) < PER_PAGE or page * PER_PAGE >= total:
+                return
+        raise TooBroad(f"only the nearest {RESULT_LIMIT} listings could be checked — narrow the places or dates")
 
     async def _country_counts(self, flt: Filter, today: date, before: str | None) -> dict[str, int]:
         query = build_query(flt, today, published_before=before, facets=("country",))

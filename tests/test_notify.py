@@ -114,8 +114,9 @@ def test_table_is_stored_and_its_buttons_point_to_it():
     numbers = sent.reply_markup.inline_keyboard[0]
     first = Browse.unpack(numbers[0].callback_data)
     assert [b.text for b in numbers] == ["1", "2"] and (first.view, first.n) == ("card", 0)
-    stored = unpack(sender.store.alert_list(first.list_id, 5))
+    stored, header = unpack(sender.store.alert_list(first.list_id, 5))
     assert [i.listing for i in stored] == [LISTING, other] and stored[0].slots == SLOTS
+    assert header is None  # an alert table: the header is the default one
 
 
 def test_table_stays_stored_when_the_send_fails():

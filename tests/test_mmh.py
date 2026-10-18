@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from petalert.http import Http
-from petalert.models import PETS, Filter
+from petalert.models import PETS, Filter, first_open_start
 from petalert.sources.base import SourceError
 from petalert.sources.mmh import (
     CACHE_SECONDS,
@@ -238,3 +238,15 @@ def test_countries_include_those_without_sits_right_now():
     assert len(countries) == sum(1 for cont, _ in COUNTRIES.values() if cont == "europe")
     assert "Albania" in names and next(c for c in countries if c.name == "Albania").count == 0
     assert all(c.slug == slugify(c.name) for c in countries)
+
+
+def test_by_start_is_the_continent_nearest_start_first():
+    fake = Fake()
+
+    async def go():
+        return [page async for page in fake.mmh.by_start(Filter("europe", country="spain", date_from=date(2026, 12, 1)))]
+
+    (page,) = fake.run(go)
+    keys = [first_open_start(l, date(2026, 12, 1)) for l in page]
+    assert keys == sorted(keys) and None not in keys
+    assert {l.continent for l in page} == {"europe"} and len({l.country for l in page}) > 1  # country left to the caller

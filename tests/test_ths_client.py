@@ -13,7 +13,7 @@ import pytest
 
 from petalert.http import Http
 from petalert.models import Filter
-from petalert.sources.base import SourceError
+from petalert.sources.base import SourceError, TooBroad
 from petalert.sources.ths import API, SEARCH_PAGE, TrustedHousesitters
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -338,3 +338,83 @@ def test_listings_added_by_the_final_refresh_come_first():
     fake = Fake(feed)
     listings = fake.run(lambda ths: ths.search(Filter("europe"), max_pages=None))
     assert listings[0].id == "new"
+
+
+# --- by_start (/search) -------------------------------------------------------
+
+
+def starting(i: int, start: date) -> dict:
+    """A listing from the fixture with one open slot starting on `start`."""
+    base = SEARCH["results"][1]
+    slot = dict(base["assignments"][0], id=str(9000 + i), startDate=start.isoformat(),
+                endDate=(start + timedelta(days=7)).isoformat())
+    return dict(base, id=str(i), assignments=[slot])
+
+
+class StartFeed:
+    """THS sorted by start date, served by page number."""
+
+    def __init__(self, starts: list[date]):
+        self.items = [starting(i, s) for i, s in enumerate(starts)]
+
+    def __call__(self, request):
+        query = json.loads(request.url.params["query"])
+        first = (query["page"] - 1) * query["resultsPerPage"]
+        return httpx.Response(
+            200, json={"results": self.items[first : first + query["resultsPerPage"]], "total": len(self.items)}
+        )
+
+
+def read(fake: Fake, flt: Filter, pages: int | None = None) -> list[list[str]]:
+    """Ids per page, reading at most `pages` pages, like a caller that stops early."""
+
+    async def go(ths):
+        out = []
+        async for page in ths.by_start(flt):
+            out.append([l.id for l in page])
+            if pages and len(out) == pages:
+                break
+        return out
+
+    return fake.run(go)
+
+
+def test_by_start_asks_for_the_start_date_sort_and_reads_only_what_the_caller_takes():
+    starts = [date(2026, 11, 1) + timedelta(days=i // 50) for i in range(250)]
+    fake = Fake(StartFeed(starts))
+    got = read(fake, Filter("europe", country="portugal", date_from=date(2026, 11, 1)), pages=2)
+    assert [len(p) for p in got] == [100, 100] and len(fake.requests) == 2
+    query = fake.queries()[0]
+    assert query["sort"] == [{"function": {"name": "SIT_START_DATE", "order": "asc"}}]
+    assert query["filters"]["assignments"]["dateFrom"] == "2026-11-01"
+    assert query["filters"]["geoHierarchy"] == {"countrySlug": "portugal"}
+    assert [q["page"] for q in fake.queries()] == [1, 2]
+
+
+def test_by_start_ends_with_the_feed():
+    fake = Fake(StartFeed([date(2026, 11, 1)] * 130))
+    assert [len(p) for p in read(fake, Filter("europe"))] == [100, 30]
+    # From tomorrow (the clock says 17 Oct): THS mixes today's starts into tomorrow's.
+    assert fake.queries()[0]["filters"]["assignments"]["dateFrom"] == "2026-10-18"
+
+
+def test_by_start_fails_loudly_when_the_sort_is_ignored():
+    starts = [date(2026, 12, 1)] * 100 + [date(2026, 11, 2)] * 10  # page 2 starts earlier
+    fake = Fake(StartFeed(starts))
+    with pytest.raises(SourceError, match="start-date sort"):
+        read(fake, Filter("europe"))
+
+    async def again(ths):
+        with pytest.raises(SourceError):
+            async for _ in ths.by_start(Filter("asia")):
+                pass
+
+    fake.run(again)
+    assert len([n for n in fake.notices if "no longer sorts by start date" in n]) == 1  # once, not per search
+
+
+def test_by_start_past_the_page_number_limit_is_too_broad():
+    fake = Fake(StartFeed([date(2026, 11, 1)] * 1050))
+    with pytest.raises(TooBroad, match="nearest 1000"):
+        read(fake, Filter("europe"))
+    assert len(fake.requests) == 10

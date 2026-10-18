@@ -149,6 +149,12 @@ def matching_slots(listing: Listing, flt: Filter, today: date) -> list[Slot]:
     return out
 
 
+def first_open_start(listing: Listing, since: date) -> date | None:
+    """The start of the listing's first open slot on or after `since` — what
+    a search by start date orders listings by (THS's own "Start date" sort)."""
+    return min((s.start for s in listing.slots if s.is_open and s.start >= since), default=None)
+
+
 def appeared_after(
     listing: Listing, slot: Slot, since: datetime | None, watermark: int | None
 ) -> bool:

@@ -1,4 +1,4 @@
-"""Telegram texts: alert, table of alerts, filter description. Pure functions.
+"""Telegram texts: alert, table of alerts (or search results), filter description. Pure functions.
 
 Parse mode is HTML, so every string from the site goes through `html.escape`:
 otherwise a listing titled "Cats & Dogs <3" would break sending the whole
@@ -97,11 +97,17 @@ def render_alert(
     *,
     limit: int = CAPTION_LIMIT,  # a photo caption; a text message can take TEXT_LIMIT
 ) -> tuple[str, InlineKeyboardMarkup]:
+    """The card of one listing. Without `sub_ids` it is a /search result:
+    its dates are the open ones in the searched range, not new ones."""
     head = [f"🏡 <b>{_title(listing)}</b>", "", f"📍 {escape(listing.place)}"]
     if listing.pets:
         head.append(escape(pets_line(listing.pets)))
-    head += ["", "🆕 <b>New dates:</b>" if len(slots) > 1 else "🆕 <b>New date:</b>"]
-    tail = ["", f"🔔 {subscriptions_label(sub_ids)} · {escape(source_title)}"]
+    if sub_ids:
+        head += ["", "🆕 <b>New dates:</b>" if len(slots) > 1 else "🆕 <b>New date:</b>"]
+        tail = ["", f"🔔 {subscriptions_label(sub_ids)} · {escape(source_title)}"]
+    else:
+        head += ["", "🗓 <b>Open dates:</b>" if len(slots) > 1 else "🗓 <b>Open date:</b>"]
+        tail = ["", f"🌐 {escape(source_title)}"]
     blocks = [slot_lines(s) for s in slots]
 
     def build(shown: int) -> str:
@@ -147,11 +153,16 @@ def _row(n: str, slot: Slot, where: str = "") -> str:
     return f"{n:>2} {dates:<11} {slot.days:>3} {where}".rstrip()
 
 
-def render_table(items: Sequence[tuple[Listing, Sequence[Slot], Sequence[int]]], page: int) -> str:
-    """One page of several new listings as a monospace table: number, dates,
-    days, place — in the given order (nearest dates first). More new dates of
-    the same listing get lines of their own, without a number."""
-    sub_ids = sorted({i for _, _, subs in items for i in subs})
+def render_table(
+    items: Sequence[tuple[Listing, Sequence[Slot], Sequence[int]]], page: int, header: str | None = None
+) -> str:
+    """One page of several listings as a monospace table: number, dates,
+    days, place — in the given order (nearest dates first). More dates of
+    the same listing get lines of their own, without a number. The header
+    defaults to that of an alert ("N new sits · Subscription #…")."""
+    if header is None:
+        sub_ids = sorted({i for _, _, subs in items for i in subs})
+        header = f"🔔 <b>{len(items)} new sits</b> · {subscriptions_label(sub_ids)}"
     # "Days" is wider than its numbers (≤ 3 digits): it takes the gap before them.
     rows = [f"{'#':>2} {'Dates':<11}Days Where"]
     first = page * PAGE_SIZE
@@ -162,7 +173,7 @@ def render_table(items: Sequence[tuple[Listing, Sequence[Slot], Sequence[int]]],
             rows.append(f"{'':>2} + {len(slots) - 1 - MORE_DATES} more")
     return "\n".join(
         [
-            f"🔔 <b>{len(items)} new sits</b> · {subscriptions_label(sub_ids)}",
+            header,
             "<pre>" + "\n".join(rows) + "</pre>",
             "👇 Tap a number for details",
         ]

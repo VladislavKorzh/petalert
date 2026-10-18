@@ -23,8 +23,9 @@ from aiogram.types import CallbackQuery, Chat, InaccessibleMessage, Message, Upd
 
 from petalert.bot import build_dispatcher
 from petalert.bot.browse import Browse, Item, pack
-from petalert.bot.dialog import Pick
+from petalert.bot.dialog import ALL_OFF, Pick
 from petalert.bot.manage import SiteToggle, SubAction
+from petalert.bot.search import BUSY, SEARCH_HELP
 from petalert.db import Store
 from petalert.models import Country, Filter, Listing, Slot
 
@@ -53,7 +54,8 @@ class FakeSession(BaseSession):
             if self.answers_expired:
                 raise TelegramBadRequest(method, "Bad Request: query is too old and response timeout expired or query ID is invalid")
         if isinstance(method, (SendMessage, EditMessageText, EditMessageReplyMarkup)):
-            return Message(message_id=100, date=datetime.now(), chat=CHAT, text=getattr(method, "text", None))
+            # Bound to the bot, as a real session's results are (so .edit_text() works on them).
+            return Message(message_id=100, date=datetime.now(), chat=CHAT, text=getattr(method, "text", None)).as_(bot)
         return True
 
     async def stream_content(self, *a, **kw) -> AsyncGenerator[bytes, None]:
@@ -72,6 +74,15 @@ class FakeSource:
 
     async def search(self, flt, *, max_pages):
         return []
+
+    start_pages: list = []  # what by_start serves (/search); set per test
+    during_search = None  # hook: runs while the "network" call is in flight
+
+    async def by_start(self, flt):
+        if self.during_search:
+            await self.during_search()
+        for page in self.start_pages:
+            yield page
 
 
 class FakeWorker:
@@ -501,3 +512,78 @@ def test_new_with_every_site_off_points_to_sites(two):
     two.store.set_source(USER, "ths", False)
     two.store.set_source(USER, "mmh", False)
     assert texts(two.text("/new")) == ["💤 All sites are off for you — turn one on in /sites first."]
+
+
+# --- /search ------------------------------------------------------------------
+
+Y = date.today().year + 1  # the bot parses against the real today
+
+
+def sit(lid: str, code: str, start: date, photo: str | None = None) -> Listing:
+    return Listing(
+        source="ths", id=lid, title=f"Sit {lid}", url=f"https://x/l/{lid}/", continent="europe",
+        country=code, place=f"Town{lid}, Region", photo_url=photo, pets=(("dog", 1),),
+        slots=(Slot(f"s{lid}", start, date(Y + 1, 1, 10), True, applicants=2),), country_code=code,
+    )
+
+
+def test_search_answers_with_a_table_whose_numbers_open_cards(h):
+    h.source.start_pages = [
+        [sit("1", "gb", date(Y, 11, 28)), sit("2", "pt", date(Y, 12, 1), "https://img/2.jpg"),
+         sit("3", "fr", date(Y, 11, 29)), sit("4", "es", date(Y, 12, 9))],
+    ]
+    calls = h.text(f"/search eu(-uk), +-3, 30.11.{Y}")
+    sent = [c for c in calls if isinstance(c, SendMessage)]
+    assert [m.text for m in sent] == [f"🔎 Searching… Europe except United Kingdom · start 27 Nov – 3 Dec {Y}"]
+    (table,) = edits(calls)
+    assert table.text.startswith(
+        f"🔎 <b>2 open sits</b> · start 27 Nov – 3 Dec {Y}\n🌍 Europe except United Kingdom\n<pre>"
+    )
+    assert " 1 29.11–10.01" in table.text and "FR Town3" in table.text and "GB" not in table.text
+    numbers = table.reply_markup.inline_keyboard[0]
+    assert [b.text for b in numbers] == ["1", "2"]
+
+    (card,) = edits(h.press(Browse.unpack(numbers[1].callback_data)))
+    assert card.text.startswith("🏡 <b>Sit 2</b>") and "🗓 <b>Open date:</b>" in card.text
+    assert card.text.endswith("🌐 TrustedHousesitters") and card.link_preview_options.url == "https://img/2.jpg"
+    (back,) = edits(h.press(Browse.unpack(card.reply_markup.inline_keyboard[1][0].callback_data)))
+    assert back.text == table.text
+
+
+def test_bare_search_explains_and_takes_the_next_message(h):
+    assert texts(h.text("/search")) == [SEARCH_HELP]
+    assert texts(h.text("atlantis"))[0].startswith("❌ Unknown place 'atlantis'")
+    h.source.start_pages = [[sit("1", "pt", date(Y, 12, 1))]]
+    calls = h.text("pt")  # still the query: no date needed here
+    assert "🔎 <b>1 open sit</b> · start from" in edits(calls)[0].text
+    assert texts(h.text("pt"))[0].startswith("➕ /new")  # the state is over
+
+
+def test_the_query_state_ends_before_the_search_runs(h):
+    """Updates run concurrently: a /new started while the search reads the
+    sites must not lose its state when the search answers."""
+    seen = []
+
+    async def state_meanwhile():
+        context = h.dp.fsm.get_context(bot=h.bot, chat_id=USER, user_id=USER)
+        seen.append(await context.get_state())
+
+    h.source.during_search = state_meanwhile
+    h.text("/search")
+    h.text(f"pt 30.11.{Y}")
+    assert seen == [None]
+
+
+def test_plain_text_with_a_date_is_a_search(h):
+    calls = h.text(f"pt 30.11.{Y}")
+    assert texts(calls)[-1] == f"🔎 <b>Nothing found</b> · start 30 Nov {Y}\n🌍 Portugal"
+    assert texts(h.text(f"eu(-asia) 30.11.{Y}"))[0].startswith("❌ Only countries can be left out")
+    assert texts(h.text("hello"))[0].startswith("➕ /new")
+
+
+def test_search_with_every_site_off_or_one_running(h):
+    h.store.set_source(USER, "ths", False)
+    assert texts(h.text(f"/search pt 30.11.{Y}")) == [ALL_OFF]
+    h.store.set_source(USER, "ths", True)
+    h.dp["searching"].add(USER)
+    assert texts(h.text(f"/search pt 30.11.{Y}")) == [BUSY]

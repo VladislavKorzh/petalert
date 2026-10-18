@@ -1,4 +1,5 @@
-"""Commands outside the dialog: /start, /help, /list, /sites, /cancel and their buttons."""
+"""Commands outside the dialog: /start, /help, /list, /sites, /cancel and their buttons.
+(/search has its own module.)"""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ HELP = (
     "<b>Commands</b>\n"
     "➕ /new — create a subscription (continent, country, dates, length, pets)\n"
     "📋 /list — your subscriptions: pause, resume, delete\n"
+    "🔎 /search — open sits by start date, e.g. <code>eu(-uk) ±3 30.11.2026</code>\n"
     "🌐 /sites — which sites you get alerts from\n"
     "✖️ /cancel — abort the current dialog\n\n"
     "ℹ️ New dates on an existing listing count as new too. "
@@ -181,7 +183,10 @@ async def unknown_text(message: Message, state: FSMContext) -> None:
     if await state.get_state() is not None:
         await message.answer("👆 Please use the buttons above, or /cancel.")
     else:
-        await message.answer("➕ /new — create a subscription\n📋 /list — manage them")
+        await message.answer(
+            "➕ /new — create a subscription\n📋 /list — manage them\n"
+            "🔎 /search — find open sits by start date"
+        )
 
 
 def build_routers() -> tuple[Router, Router]:

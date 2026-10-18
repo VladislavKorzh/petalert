@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import httpx
 import pytest
 
+from petalert import geo
 from petalert.config import DEFAULT_THS_API_VERSION
 from petalert.http import Http
-from petalert.models import Filter, matching_slots
+from petalert.models import CONTINENTS, Filter, first_open_start, matching_slots
 from petalert.sources.ths import USER_AGENT, TrustedHousesitters
 
 pytestmark = pytest.mark.skipif(os.environ.get("PETALERT_LIVE") != "1", reason="PETALERT_LIVE=1")
@@ -54,3 +55,32 @@ def test_short_listing_url_redirects():
     resp = httpx.get(listing.url, headers={"User-Agent": USER_AGENT})
     assert resp.status_code == 302
     assert f"/l/{listing.id}/" in resp.headers["location"]
+
+
+def test_every_ths_country_is_in_geo_on_the_same_continent():
+    """/search queries a country by geo's slug and scopes it by geo's continent."""
+    by_slug = {geo.slug(code): code for code in geo.COUNTRIES}
+
+    async def facets(ths):
+        return {c: await ths.countries(c) for c in CONTINENTS}
+
+    for continent, countries in run(facets).items():
+        for country in countries:
+            code = by_slug.get(country.slug)
+            assert code and geo.continent(code) == continent, (continent, country.slug)
+
+
+def test_by_start_is_ordered_by_the_first_open_start():
+    since = date.today() + timedelta(days=1)  # by_start's earliest
+
+    async def two_pages(ths):
+        pages = []
+        async for page in ths.by_start(Filter("europe", date_from=since)):
+            pages.append(page)
+            if len(pages) == 2:
+                break
+        return pages
+
+    pages = run(two_pages)  # by_start itself raises if the order breaks
+    keys = [first_open_start(l, since) for page in pages for l in page]
+    assert len(keys) > 150 and keys == sorted(keys)

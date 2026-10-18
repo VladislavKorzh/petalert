@@ -29,12 +29,12 @@ import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import date
 from html import unescape
 
 from ..http import Http
-from ..models import Country, Filter, Listing, Slot, listing_matches, matching_slots
+from ..models import Country, Filter, Listing, Slot, first_open_start, listing_matches, matching_slots
 from .base import Notice, SourceError
 
 log = logging.getLogger(__name__)
@@ -303,6 +303,15 @@ class MindMyHouse:
         filter is applied here, as an API would."""
         today = self._clock()
         return [l for l in await self._all() if listing_matches(l, flt) and matching_slots(l, flt, today)]
+
+    async def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
+        """The whole site is one page: the continent's listings with an open
+        slot from `flt.date_from` on, nearest first. The country is left to the
+        caller (it matches on ISO codes)."""
+        today = self._clock()
+        since = max(today, flt.date_from or today)
+        keyed = [(first_open_start(l, since), l) for l in await self._all() if l.continent == flt.continent]
+        yield [l for k, l in sorted((kl for kl in keyed if kl[0]), key=lambda kl: (kl[0], kl[1].id))]
 
     async def countries(self, continent: str) -> list[Country]:
         """All of the site's countries of the continent, even those without a

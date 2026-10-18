@@ -4,6 +4,7 @@
     python -m petalert codes generate 100     # a new pack of invite codes with deep links
     python -m petalert codes list             # unused codes
     python -m petalert rebaseline mmh         # re-index a site quietly, see rebaseline() below
+    python -m petalert search "eu(-uk) ±3 30.11.2026"   # what /search finds, without Telegram
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import contextlib
 import html
 import logging
 import sys
+from datetime import date
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -26,6 +28,7 @@ from .config import Settings
 from .db import Store, format_code
 from .http import Http
 from .scheduler import Worker
+from .search import parse, run
 from .sources import REGISTRY, build_sources
 
 log = logging.getLogger("petalert")
@@ -33,6 +36,7 @@ log = logging.getLogger("petalert")
 COMMANDS = [
     BotCommand(command="new", description="Create a subscription"),
     BotCommand(command="list", description="Your subscriptions"),
+    BotCommand(command="search", description="Find open sits by start date"),
     BotCommand(command="sites", description="Sites you get alerts from"),
     BotCommand(command="cancel", description="Abort the current dialog"),
     BotCommand(command="help", description="How it works"),
@@ -90,6 +94,34 @@ def rebaseline(settings: Settings, source: str) -> None:
         store.close()
 
 
+def search(settings: Settings, text: str) -> None:
+    """/search on every site, printed — no Telegram, no database."""
+    from .bot.format import city
+    from .bot.search import describe
+
+    try:
+        query = parse(text, date.today())
+    except ValueError as exc:
+        sys.exit(str(exc))
+
+    async def go():
+        http = Http(settings.proxy_url, settings.proxy_mode)
+        try:
+            return await run(query, list(build_sources(http, settings).values()))
+        finally:
+            await http.aclose()
+
+    found = asyncio.run(go())
+    where, when = describe(query)
+    n = len(found.items)
+    print(f"{n} open sit{'' if n == 1 else 's'} · start {when} · {where}" + (" · more exist" if found.more else ""))
+    for problem in found.problems:
+        print(f"! {problem}")
+    for listing, slots in found.items:
+        dates = ", ".join(f"{s.start:%d.%m.%Y}–{s.end:%d.%m.%Y} ({s.days} d)" for s in slots)
+        print(f"{dates}  {(listing.country_code or '--').upper()} {city(listing)}  [{listing.source}] {listing.url}")
+
+
 async def _bot_username(token: str) -> str:
     async with Bot(token) as bot:
         return (await bot.get_me()).username
@@ -126,6 +158,8 @@ def main() -> None:
     codes_sub.add_parser("list")
     rb = sub.add_parser("rebaseline", help="re-index a site quietly; run with the bot stopped")
     rb.add_argument("source", choices=list(REGISTRY))
+    p_search = sub.add_parser("search", help="what /search finds, without Telegram")
+    p_search.add_argument("query")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -138,6 +172,9 @@ def main() -> None:
         return
     if args.cmd == "rebaseline":
         rebaseline(settings, args.source)
+        return
+    if args.cmd == "search":
+        search(settings, args.query)
         return
     if not settings.bot_token:
         sys.exit("BOT_TOKEN is not set — see .env.example")

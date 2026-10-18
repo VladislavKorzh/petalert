@@ -100,6 +100,14 @@ def test_table_layout():
     )
 
 
+def test_a_search_table_has_its_own_header_and_its_cards_no_subscriptions():
+    items = [(placed("1", "Lisbon", "pt"), [dated("a", "2026-12-01", "2026-12-10")], [])]
+    assert render_table(items, 0, "🔎 <b>1 open sit</b>").startswith("🔎 <b>1 open sit</b>\n<pre>")
+    text, _ = render_alert(listing(), [slot(1), slot(2)], [], "MindMyHouse")
+    assert "🗓 <b>Open dates:</b>" in text and text.endswith("\n\n🌐 MindMyHouse")
+    assert "New date" not in text and "Subscription" not in text
+
+
 def test_table_pages_and_many_dates():
     one = (placed("1", "Lisbon", "pt"), [dated(str(i), "2026-12-01", "2026-12-10") for i in range(5)], [2])
     items = [one] * (PAGE_SIZE + 3)
