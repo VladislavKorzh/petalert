@@ -21,7 +21,7 @@ TEXT_LIMIT = 4096
 TITLE_LIMIT = 200
 PAGE_SIZE = 10  # listings per page of an alert table
 MORE_DATES = 2  # extra new dates of one listing shown in the table; its card has all
-CITY_LIMIT = 11  # a table row has to fit a phone screen (~33 monospace characters)
+CITY_LIMIT = 10  # a table row has to fit a phone screen (≤ 35 monospace characters)
 
 _PLURAL = {"fish": "fish", "poultry": "poultry"}
 PET_EMOJI = {
@@ -127,6 +127,12 @@ def flag(code: str | None) -> str:
     return "".join(chr(0x1F1E6 + ord(ch) - ord("a")) for ch in code.lower())
 
 
+def country_tag(code: str | None) -> str:
+    """`pt` → `🇵🇹 PT`: the flag, and the ISO code for flags that look alike."""
+    tag = flag(code)
+    return f"{tag} {code.upper()}" if code and tag != "📍" else tag
+
+
 def city(listing: Listing) -> str:
     """The first part of the place ("Espiche" of "Espiche, Faro, Portugal"),
     short enough for a table row on a phone."""
@@ -136,7 +142,7 @@ def city(listing: Listing) -> str:
 
 def _row(n: str, slot: Slot, where: str = "") -> str:
     dates = f"{slot.start:%d.%m}–{slot.end:%d.%m}"
-    return f"{n:>2} {dates:<11} {slot.days:>4} {where}".rstrip()
+    return f"{n:>2} {dates:<11} {slot.days:>3} {where}".rstrip()
 
 
 def render_table(items: Sequence[tuple[Listing, Sequence[Slot], Sequence[int]]], page: int) -> str:
@@ -144,10 +150,11 @@ def render_table(items: Sequence[tuple[Listing, Sequence[Slot], Sequence[int]]],
     days, place — in the given order (nearest dates first). More new dates of
     the same listing get lines of their own, without a number."""
     sub_ids = sorted({i for _, _, subs in items for i in subs})
-    rows = [f"{'#':>2} {'Dates':<11} {'Days':>4} Where"]
+    # "Days" is wider than its numbers (≤ 3 digits): it takes the gap before them.
+    rows = [f"{'#':>2} {'Dates':<11}Days Where"]
     first = page * PAGE_SIZE
     for n, (listing, slots, _) in enumerate(items[first : first + PAGE_SIZE], start=first + 1):
-        rows.append(_row(str(n), slots[0], f"{flag(listing.country_code)} {escape(city(listing))}"))
+        rows.append(_row(str(n), slots[0], f"{country_tag(listing.country_code)} {escape(city(listing))}"))
         rows += [_row("", s) for s in slots[1 : 1 + MORE_DATES]]
         if len(slots) > 1 + MORE_DATES:
             rows.append(f"{'':>2} + {len(slots) - 1 - MORE_DATES} more")

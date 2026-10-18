@@ -8,6 +8,7 @@ from petalert.bot.format import (
     TEXT_LIMIT,
     city,
     country_name,
+    country_tag,
     describe_filter,
     flag,
     render_alert,
@@ -85,11 +86,11 @@ def test_table_layout():
     ]
     assert render_table(items, 0) == (
         "🔔 <b>3 new sits</b> · Subscriptions #1, #3\n"
-        "<pre> # Dates       Days Where\n"
-        " 1 02.11–09.11    7 🇸🇪 Kungsbacka\n"
-        " 2 09.12–09.01   31 🇫🇷 Villefranc…\n"
-        "   05.02–20.02   15\n"
-        " 3 01.03–01.06   92 📍 &lt;Odd &amp; Co&gt;</pre>\n"
+        "<pre> # Dates      Days Where\n"
+        " 1 02.11–09.11   7 🇸🇪 SE Kungsbacka\n"
+        " 2 09.12–09.01  31 🇫🇷 FR Villefran…\n"
+        "   05.02–20.02  15\n"
+        " 3 01.03–01.06  92 📍 &lt;Odd &amp; Co&gt;</pre>\n"
         "👇 Tap a number for details"
     )
 
@@ -105,7 +106,7 @@ def test_table_pages_and_many_dates():
     # A full page of listings with dates still fits a message and a phone row.
     assert tg_len(first) < TEXT_LIMIT
     rows = first.split("<pre>")[1].split("</pre>")[0].split("\n")
-    assert max(len(r) for r in rows) <= 34
+    assert max(len(r) for r in rows) <= 35
 
 
 def test_city_is_cut_without_a_dangling_space():
@@ -117,6 +118,8 @@ def test_city_is_cut_without_a_dangling_space():
 def test_flag():
     assert flag("pt") == "🇵🇹" and flag("GB") == "🇬🇧"
     assert flag(None) == flag("") == flag("xyz") == flag("1a") == "📍"
+    assert country_tag("pt") == "🇵🇹 PT" and country_tag("gb") == "🇬🇧 GB"
+    assert country_tag(None) == country_tag("xyz") == "📍"
 
 
 def test_describe_filter():
