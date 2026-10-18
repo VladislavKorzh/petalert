@@ -81,3 +81,16 @@ def test_transport_errors_retry_and_finally_raise():
     with pytest.raises(httpx.ConnectError):
         get(http)
     assert calls == [False, True, True]
+
+
+def test_a_request_can_ask_for_fallback_whatever_the_setting():
+    http, calls, _ = make_http([503, 200], proxy_url="http://proxy:1", mode="always")
+
+    async def run():
+        try:
+            return await http.get(URL, proxy_mode="fallback")
+        finally:
+            await http.aclose()
+
+    assert asyncio.run(run()).status_code == 200
+    assert calls == [False, True]

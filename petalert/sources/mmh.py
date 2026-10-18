@@ -45,6 +45,10 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
+# The site doesn't block datacenter IPs, so it goes direct even with
+# PROXY_MODE=always; the proxy is only for retries. (2026-10-18: for hours the
+# proxy pool answered 522 for this site while a direct GET from the VPS worked.)
+PROXY_MODE = "fallback"
 CACHE_SECONDS = 300  # one fetch serves all filters of a tick and the /new dialog
 RETRY_SECONDS = 120  # after a failure: the rest of the tick fails fast instead of refetching
 
@@ -271,7 +275,9 @@ class MindMyHouse:
             return listings
 
     async def _fetch(self) -> list[Listing]:
-        resp = await self.http.get(SEARCH_PAGE, headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
+        resp = await self.http.get(
+            SEARCH_PAGE, headers={"User-Agent": USER_AGENT, "Accept": "text/html"}, proxy_mode=PROXY_MODE
+        )
         if resp.status_code != 200:
             raise SourceError(f"MindMyHouse HTTP {resp.status_code}: {resp.text[:200]}")
         listings, total = parse_page(resp.text)

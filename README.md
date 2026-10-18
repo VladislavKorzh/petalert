@@ -155,7 +155,8 @@ dropped locally, so they still count: "Europe except the UK" fetches all
 ~2100 European results, ~22 pages ≈ 2.5 MB per crawl, ~25 MB/day ≈ 0.75 GB/month
 in total. A single country is usually one request. Subscriptions with the same
 filter share the requests; at most 4 scheduled full crawls run per tick.
-MindMyHouse is one ~45 KB request per tick whatever the filters (~2 MB/day).
+MindMyHouse is one ~45 KB request per tick whatever the filters, and it goes
+direct: the site doesn't block datacenter IPs, so the proxy is only its fallback.
 
 First deployment (on the server, as a sudo user — `deploy` here):
 

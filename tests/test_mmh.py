@@ -250,3 +250,25 @@ def test_by_start_is_the_continent_nearest_start_first():
     keys = [first_open_start(l, date(2026, 12, 1)) for l in page]
     assert keys == sorted(keys) and None not in keys
     assert {l.continent for l in page} == {"europe"} and len({l.country for l in page}) > 1  # country left to the caller
+
+
+def test_goes_direct_even_when_the_proxy_is_always_on():
+    used: list[bool] = []
+
+    def factory(proxy):
+        def handler(request):
+            used.append(proxy is not None)
+            return httpx.Response(200, text=PAGE)
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    http = Http("http://proxy:1", "always", min_interval=0, client_factory=factory)
+    mmh = MindMyHouse(http, clock=lambda: TODAY)
+
+    async def go():
+        try:
+            return await mmh.search(Filter("europe"), max_pages=1)
+        finally:
+            await http.aclose()
+
+    assert asyncio.run(go()) and used == [False]

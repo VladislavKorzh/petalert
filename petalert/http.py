@@ -4,7 +4,8 @@ By default the proxy is only a fallback: THS serves the API directly, and every
 request through a residential pool costs traffic. So the first attempt goes
 direct, and retries after 403/429/5xx go through the proxy if one is set
 (`fallback`). `always` is for when the server's own IP is already blocked
-(THS blocks datacenter ranges such as DigitalOcean).
+(THS blocks datacenter ranges such as DigitalOcean). A source that isn't
+blocked can ask for `fallback` per request, whatever the setting.
 
 One instance per process, and all requests (worker ticks and the /new dialog)
 share a lock: at most one request every `min_interval` seconds.
@@ -69,17 +70,21 @@ class Http:
             finally:
                 self._last = time.monotonic()
 
-    async def get(self, url: str, *, params=None, headers=None) -> httpx.Response:
+    async def get(
+        self, url: str, *, params=None, headers=None, proxy_mode: Literal["fallback", "always"] | None = None
+    ) -> httpx.Response:
         """Return the last response (any status — the caller interprets it).
 
         Only 403/429/5xx and transport failures are retried; if every attempt
         failed at the transport level, the last `httpx.TransportError` is raised.
+        `proxy_mode` overrides the instance's mode for this request.
         """
+        mode = proxy_mode or self.proxy_mode
         result: httpx.Response | httpx.TransportError | None = None
         for attempt in range(ATTEMPTS):
             if attempt:
                 await self._sleep(BACKOFF[attempt - 1] * random.uniform(1.0, 1.3))
-            via_proxy = bool(self.proxy_url) and (self.proxy_mode == "always" or attempt > 0)
+            via_proxy = bool(self.proxy_url) and (mode == "always" or attempt > 0)
             try:
                 result = await self._send(via_proxy, url, params, headers)
             except httpx.TransportError as exc:
