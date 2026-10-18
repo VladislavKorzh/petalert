@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..db import Store, Subscription
 from ..scheduler import Worker
+from .browse import Id
 from .format import describe_filter
 from .ui import STALE, answer, chat_id, edit
 
@@ -22,7 +23,8 @@ HELP = (
     "📋 /list — your subscriptions: pause, resume, delete\n"
     "✖️ /cancel — abort the current dialog\n\n"
     "ℹ️ New dates on an existing listing count as new too. "
-    "Sites are checked about every 30 minutes."
+    "Sites are checked about every 30 minutes; several new sits at once "
+    "arrive as one table — tap a number for the details."
 )
 
 STATUS = {"active": "🟢 active", "baselining": "⏳ indexing", "paused": "⏸ paused"}
@@ -30,7 +32,7 @@ STATUS = {"active": "🟢 active", "baselining": "⏳ indexing", "paused": "⏸ 
 
 class SubAction(CallbackData, prefix="s"):
     action: str  # pause | resume | delete
-    sub_id: int
+    sub_id: Id
 
 
 def sub_text(sub: Subscription, sources_titles: dict[str, str]) -> str:

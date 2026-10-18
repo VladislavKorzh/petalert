@@ -154,6 +154,7 @@ def parse_listing(raw: dict[str, Any]) -> Listing:
         ),
         slots=slots,
         published=_published(raw),
+        country_code=(loc.get("countryCode") or "").lower() or None,
     )
 
 

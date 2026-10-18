@@ -106,6 +106,7 @@ class Listing:
     pets: tuple[tuple[str, int], ...]  # (("cat", 2), ("dog", 1))
     slots: tuple[Slot, ...] = field(default=())
     published: datetime | None = None  # last (re)publication, UTC; None if unknown
+    country_code: str | None = None  # ISO 3166 alpha-2, lower case ("pt") — display only
 
 
 @dataclass(frozen=True)

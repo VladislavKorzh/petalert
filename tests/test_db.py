@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from petalert.db import CODE_ALPHABET, Store, format_code, normalize_code
+from petalert.db import ALERT_LIST_TTL, CODE_ALPHABET, Store, format_code, normalize_code, utcnow
 from petalert.models import Filter
 
 FLT = Filter("europe", country="portugal")
@@ -91,9 +91,19 @@ def test_prune_drops_past_slots_and_orphan_query_state(store):
     store.touch_query("ths", FLT.to_json(), now, full=True)
     store.touch_query("ths", Filter("asia").to_json(), now, full=True)
 
-    assert store.prune(date(2026, 10, 17)) == (1, 1)
+    assert store.prune(date(2026, 10, 17)) == (1, 1, 0)
     assert store.delivered_keys(sub_id) == {"ths:new"}
     assert store.query_state("ths", FLT.to_json())[0] == now
+
+
+def test_alert_lists_belong_to_their_chat_and_expire(store):
+    list_id = store.add_alert_list(10, "[1]")
+    assert store.alert_list(list_id, 10) == "[1]"
+    assert store.alert_list(list_id, 11) is None  # forged list id from another chat
+    today = utcnow().date()
+    assert store.prune(today + ALERT_LIST_TTL) == (0, 0, 0)
+    assert store.prune(today + ALERT_LIST_TTL + timedelta(days=1)) == (0, 0, 1)
+    assert store.alert_list(list_id, 10) is None
 
 
 def test_codes_are_single_use(store):

@@ -9,7 +9,7 @@ import pytest
 
 from petalert.db import Store
 from petalert.models import Filter, Listing, Slot
-from petalert.scheduler import MAX_ALERTS_PER_CHAT, ChatGone, Worker
+from petalert.scheduler import MAX_LIST, ChatGone, Worker
 from petalert.sources.base import SourceError
 
 FLT = Filter("europe")
@@ -48,7 +48,7 @@ class FakeSource:
 class FakeOutbox:
     def __init__(self):
         self.alerts: list[tuple[int, str, list[str], list[int]]] = []
-        self.digests: list[tuple[int, list[str]]] = []
+        self.lists: list[tuple[int, list[tuple[str, list[str], list[int]]]]] = []
         self.texts: list[tuple[int, str]] = []
         self.gone: set[int] = set()
         self.fail_alerts = False
@@ -63,10 +63,11 @@ class FakeOutbox:
             raise RuntimeError("telegram down")
         self.alerts.append((chat_id, listing.id, [s.id for s in slots], sub_ids))
 
-    async def digest(self, chat_id, items):
+    async def listings(self, chat_id, items):
         self._check(chat_id)
-        self.digests.append((chat_id, [l.id for l, _ in items]))
-        return len(items)
+        if self.fail_alerts:
+            raise RuntimeError("telegram down")
+        self.lists.append((chat_id, [(l.id, [s.id for s in slots], subs) for l, slots, subs in items]))
 
     async def text(self, chat_id, text):
         self._check(chat_id)
@@ -206,14 +207,61 @@ def test_resume_rebaselines_silently(env):
     assert env.store.delivered_keys(sub) == {"ths:during_pause"}
 
 
-def test_overflow_goes_into_one_digest(env):
+def test_several_listings_go_out_as_one_table_nearest_dates_first(env):
+    sub = env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [
+        listing("late", slot("l", "2027-03-01", "2027-03-10")),
+        listing("two", slot("t2", "2027-01-01", "2027-01-05"), slot("t1", "2026-12-05", "2026-12-20")),
+        listing("soon", slot("s", "2026-12-05", "2026-12-12")),
+    ]
+    env.tick()
+    assert env.outbox.alerts == []
+    assert env.outbox.lists == [
+        (10, [("soon", ["s"], [sub]), ("two", ["t1", "t2"], [sub]), ("late", ["l"], [sub])])
+    ]
+    assert env.store.delivered_keys(sub) >= {"ths:s", "ths:t1", "ths:t2", "ths:l"}
+
+
+def test_table_overflow_goes_out_next_tick(env):
     env.store.add_subscription(10, "ths", FLT)
     env.tick()
     env.advance()
-    env.source.listings = [listing(str(i), slot(f"s{i}")) for i in range(MAX_ALERTS_PER_CHAT + 3)]
+    env.source.listings = [
+        listing(str(i), slot(f"s{i}", f"2027-01-{i % 28 + 1:02d}", "2027-02-01")) for i in range(MAX_LIST + 2)
+    ]
     env.tick()
-    assert len(env.outbox.alerts) == MAX_ALERTS_PER_CHAT
-    assert env.outbox.digests == [(10, [str(i) for i in range(MAX_ALERTS_PER_CHAT, MAX_ALERTS_PER_CHAT + 3)])]
+    ((_, first),) = env.outbox.lists
+    assert len(first) == MAX_LIST
+
+    env.advance()
+    env.tick()
+    assert len(env.outbox.lists) == 2 and len(env.outbox.lists[1][1]) == 2  # one table: 2 left
+    assert {i for _, items in env.outbox.lists for i, _, _ in items} == {str(i) for i in range(MAX_LIST + 2)}
+
+
+def test_failed_table_is_retried_whole(env):
+    env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("a")), listing("2", slot("b"))]
+    env.outbox.fail_alerts = True
+    env.tick()
+    env.advance()
+    env.outbox.fail_alerts = False
+    env.tick()
+    assert [[i for i, _, _ in items] for _, items in env.outbox.lists] == [["1", "2"]]
+
+
+def test_blocked_bot_pauses_the_chat_on_a_table_too(env):
+    sub = env.store.add_subscription(10, "ths", FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("a")), listing("2", slot("b"))]
+    env.outbox.gone.add(10)
+    env.tick()
+    assert env.store.subscription(sub, 10).status == "paused"
 
 
 def test_full_crawl_decision(env):
@@ -447,5 +495,7 @@ def test_old_listing_seen_for_the_first_time_is_not_news(env):
         dated("republished", later, seq_slot(2083944)),      # re-published after the baseline
     ]
     env.tick()
-    assert sorted(a[1] for a in env.outbox.alerts) == ["newdates", "republished"]
+    assert env.outbox.alerts == []
+    ((_, items),) = env.outbox.lists
+    assert sorted(i for i, _, _ in items) == ["newdates", "republished"]
     assert "ths:2111592" in env.store.delivered_keys(sub)  # noted silently, never alerted later

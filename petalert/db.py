@@ -17,7 +17,7 @@ import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
 from .models import Filter
@@ -65,6 +65,14 @@ CREATE TABLE IF NOT EXISTS delivered (
     PRIMARY KEY (sub_id, slot_key)
 ) WITHOUT ROWID;
 
+-- A table of several new sits sent as one message: what its buttons open.
+CREATE TABLE IF NOT EXISTS alert_list (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL,
+    items_json TEXT NOT NULL,              -- the listings and their new slots, as sent
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS query_state (
     source       TEXT NOT NULL,
     filter_json  TEXT NOT NULL,
@@ -73,6 +81,9 @@ CREATE TABLE IF NOT EXISTS query_state (
     PRIMARY KEY (source, filter_json)
 );
 """
+
+# The buttons of an alert table keep working this long.
+ALERT_LIST_TTL = timedelta(days=30)
 
 # No look-alike characters (0/O, 1/I/L): codes get read out and retyped by hand.
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -336,7 +347,7 @@ class Store:
             (source, filter_json, at.isoformat(), at.isoformat() if full else None),
         )
 
-    def prune(self, today: date) -> tuple[int, int]:
+    def prune(self, today: date) -> tuple[int, int, int]:
         with self.tx() as conn:
             delivered = conn.execute(
                 "DELETE FROM delivered WHERE end_date < ?", (today.isoformat(),)
@@ -345,7 +356,26 @@ class Store:
                 "DELETE FROM query_state WHERE NOT EXISTS (SELECT 1 FROM subscription s"
                 " WHERE s.source = query_state.source AND s.filter_json = query_state.filter_json)"
             ).rowcount
-        return delivered, states
+            lists = conn.execute(
+                "DELETE FROM alert_list WHERE created_at < ?",
+                ((today - ALERT_LIST_TTL).isoformat(),),
+            ).rowcount
+        return delivered, states, lists
+
+    # --- alert lists ----------------------------------------------------------
+
+    def add_alert_list(self, chat_id: int, items_json: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO alert_list (chat_id, items_json, created_at) VALUES (?, ?, ?)",
+            (chat_id, items_json, utcnow().isoformat()),
+        )
+        return int(cur.lastrowid)
+
+    def alert_list(self, list_id: int, chat_id: int) -> str | None:
+        row = self.conn.execute(
+            "SELECT items_json FROM alert_list WHERE id = ? AND chat_id = ?", (list_id, chat_id)
+        ).fetchone()
+        return row[0] if row else None
 
     # --- access ---------------------------------------------------------------
 

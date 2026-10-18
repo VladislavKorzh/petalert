@@ -22,10 +22,11 @@ from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup, EditMes
 from aiogram.types import CallbackQuery, Chat, InaccessibleMessage, Message, Update, User
 
 from petalert.bot import build_dispatcher
+from petalert.bot.browse import Browse, Item, pack
 from petalert.bot.dialog import Pick
 from petalert.bot.manage import SubAction
 from petalert.db import Store
-from petalert.models import Country, Filter
+from petalert.models import Country, Filter, Listing, Slot
 
 USER = 7
 CHAT = Chat(id=USER, type="private")
@@ -293,3 +294,91 @@ def test_expired_callback_answer_does_not_abort_the_action(h):
     calls = h.press(SubAction(action="pause", sub_id=sub_id))
     assert h.store.subscription(sub_id, USER).status == "paused"
     assert any(isinstance(c, EditMessageText) and "paused" in c.text for c in calls)
+
+
+def table(h, count: int, chat: int = USER) -> int:
+    items = [
+        Item(
+            Listing(
+                source="ths", id=str(i), title=f"Sit {i}", url=f"https://x/l/{i}/", continent="europe",
+                country="portugal", place=f"Town{i}, Faro, Portugal",
+                photo_url=f"https://img/{i}.jpg" if i % 2 else None, pets=(("cat", 1),), country_code="pt",
+            ),
+            [Slot(f"s{i}", date(2030, 1, 1 + i % 28), date(2030, 2, 1), True, applicants=0)],
+            [1],
+        )
+        for i in range(count)
+    ]
+    return h.store.add_alert_list(chat, pack(items))
+
+
+def edits(calls) -> list[EditMessageText]:
+    return [c for c in calls if isinstance(c, EditMessageText)]
+
+
+def test_table_number_opens_the_card_in_place_with_the_photo(h):
+    list_id = table(h, 3)
+    (card,) = edits(h.press(Browse(list_id=list_id, view="card", n=1)))
+    assert card.text.startswith("🏡 <b>Sit 1</b>")
+    assert card.link_preview_options.url == "https://img/1.jpg"
+    assert card.link_preview_options.show_above_text and card.link_preview_options.prefer_large_media
+    buttons = [[b.text for b in row] for row in card.reply_markup.inline_keyboard]
+    assert buttons == [["◀", "2/3", "▶"], ["📋 Back to the list"], ["🔗 Open on TrustedHousesitters"]]
+    assert card.reply_markup.inline_keyboard[2][0].url == "https://x/l/1/"
+
+    # ◀ ▶ wrap around; a listing without a photo gets no preview at all
+    (prev,) = edits(h.press(Browse.unpack(card.reply_markup.inline_keyboard[0][0].callback_data)))
+    assert prev.text.startswith("🏡 <b>Sit 0</b>") and prev.link_preview_options.is_disabled
+    (wrapped,) = edits(h.press(Browse(list_id=list_id, view="card", n=2)))
+    nxt = Browse.unpack(wrapped.reply_markup.inline_keyboard[0][2].callback_data)
+    assert nxt.n == 0
+
+    (back,) = edits(h.press(Browse.unpack(card.reply_markup.inline_keyboard[1][0].callback_data)))
+    assert "<pre>" in back.text and back.link_preview_options.is_disabled
+
+
+def test_table_pages(h):
+    list_id = table(h, 13)
+    (page2,) = edits(h.press(Browse(list_id=list_id, view="page", n=1)))
+    rows = page2.reply_markup.inline_keyboard
+    assert [b.text for b in rows[0]] == ["11", "12", "13"]
+    assert [b.text for b in rows[-1]] == ["◀", "2/2", "▶"]
+    # Back from card 12 lands on page 2
+    (card,) = edits(h.press(Browse.unpack(rows[0][1].callback_data)))
+    assert Browse.unpack(card.reply_markup.inline_keyboard[1][0].callback_data).n == 1
+    # the page counter button does nothing
+    calls = h.press(Browse(list_id=list_id, view="noop"))
+    assert edits(calls) == [] and answers(calls) == [None]
+
+
+def test_table_buttons_are_checked_against_the_chat_and_the_list(h):
+    foreign = table(h, 2, chat=999)
+    assert answers(h.press(Browse(list_id=foreign, view="card", n=0))) == ["⌛ This list has expired."]
+    mine = table(h, 2)
+    assert answers(h.press(Browse(list_id=mine, view="card", n=2))) == ["Unknown button"]
+    assert answers(h.press(Browse(list_id=mine, view="frame", n=0))) == ["Unknown button"]
+
+
+class RawData:
+    """Callback data exactly as a (forged) client sends it."""
+
+    def __init__(self, data: str):
+        self.data = data
+
+    def pack(self) -> str:
+        return self.data
+
+
+@pytest.mark.parametrize(
+    "data", ["b:" + "9" * 40 + ":card:0", "b:1:page:-1", "b:0:card:0", "b:x:card:0", "s:pause:" + "9" * 40]
+)
+def test_forged_out_of_range_numbers_are_stale_buttons_not_crashes(h, data):
+    table(h, 2)
+    assert answers(h.press(RawData(data))) == [STALE]
+
+
+def test_table_button_on_an_inaccessible_message_sends_the_card_anew(h):
+    list_id = table(h, 2)
+    calls = h.press(Browse(list_id=list_id, view="card", n=1), inaccessible=True)
+    (sent,) = [c for c in calls if isinstance(c, SendMessage)]
+    assert sent.text.startswith("🏡 <b>Sit 1</b>") and sent.link_preview_options.url == "https://img/1.jpg"

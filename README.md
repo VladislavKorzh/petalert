@@ -9,6 +9,9 @@ page's internal JSON API, no login).
 - Only news: a listing (re)published after you subscribed, or dates created
   after you subscribed. An old listing the bot merely sees for the first time
   (or a sit that only re-opens) is noted silently, never alerted.
+- One new sit arrives as a card with a photo; several at once as one table
+  (dates, days, place; nearest dates first), where a number opens the card in
+  the same message and ◀ ▶ flip through them.
 - Multiple users, each with their own subscriptions (`/new`, `/list`).
 - Access via single-use invite codes.
 - Filters: continent, country (or "all except…"), a date window (the sit must
@@ -40,7 +43,7 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 | `petalert/sources/ths.py` | THS query and parsing, `api-version` self-healing on 406 |
 | `petalert/http.py` | retries, backoff, proxy, at most one request every 2 s |
 | `petalert/scheduler.py` | worker: grouping, baseline, dedup, delivery, admin health alerts |
-| `petalert/db.py` | SQLite: subscriptions, `delivered`, `query_state`, invite codes |
+| `petalert/db.py` | SQLite: subscriptions, `delivered`, `query_state`, alert tables, invite codes |
 | `petalert/bot/` | dialog, management, access gate, message texts, sending |
 
 **Adding a site:** a module in `petalert/sources/` implementing `Source`

@@ -9,10 +9,13 @@ Two Telegram realities the handlers would otherwise crash on:
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, LinkPreviewOptions, Message
 
 STALE = "⌛ This button has expired. Start again with /new."
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 def chat_id(query: CallbackQuery) -> int:
@@ -34,15 +37,22 @@ def _harmless(exc: TelegramBadRequest) -> bool:
     return "message is not modified" in str(exc)
 
 
-async def edit(query: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
+async def edit(
+    query: CallbackQuery,
+    text: str,
+    markup: InlineKeyboardMarkup | None = None,
+    *,
+    preview: LinkPreviewOptions | None = None,
+) -> None:
+    extra: dict[str, Any] = {"link_preview_options": preview} if preview else {}
     if isinstance(query.message, Message):
         try:
-            await query.message.edit_text(text, reply_markup=markup)
+            await query.message.edit_text(text, reply_markup=markup, **extra)
         except TelegramBadRequest as exc:
             if not _harmless(exc):
                 raise
         return
-    await query.bot.send_message(chat_id(query), text, reply_markup=markup)
+    await query.bot.send_message(chat_id(query), text, reply_markup=markup, **extra)
 
 
 async def edit_markup(query: CallbackQuery, markup: InlineKeyboardMarkup) -> None:

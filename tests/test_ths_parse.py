@@ -26,7 +26,7 @@ def test_fields_url_and_photo():
     assert listing.source == "ths"
     assert listing.url == "https://www.trustedhousesitters.com/house-and-pet-sitting-assignments/l/2214923/"
     assert listing.continent == "europe" and listing.country == "portugal"
-    assert listing.place == "Espiche, Faro, Portugal"
+    assert listing.place == "Espiche, Faro, Portugal" and listing.country_code == "pt"
     assert listing.photo_url.startswith(
         "https://res.cloudinary.com/trustedhousesitters/image/upload/t_social_media_preview/remote_media/"
     )

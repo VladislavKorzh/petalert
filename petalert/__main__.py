@@ -50,7 +50,7 @@ async def run_bot(settings: Settings) -> None:
             await bot.send_message(settings.admin_chat_id, html.escape(text))
 
     sources = build_sources(http, settings, notice=admin)
-    outbox = TelegramOutbox(bot, {key: s.title for key, s in sources.items()})
+    outbox = TelegramOutbox(bot, {key: s.title for key, s in sources.items()}, store)
     worker = Worker(
         store, sources, outbox, admin, settings.poll_interval, full_every=settings.full_crawl_every
     )

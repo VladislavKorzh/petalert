@@ -1,4 +1,4 @@
-"""Telegram texts: alert, digest, filter description. Pure functions.
+"""Telegram texts: alert, table of alerts, filter description. Pure functions.
 
 Parse mode is HTML, so every string from the site goes through `html.escape`:
 otherwise a listing titled "Cats & Dogs <3" would break sending the whole
@@ -8,6 +8,7 @@ message.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import date
 from html import escape, unescape
 
@@ -18,6 +19,9 @@ from ..models import CONTINENTS, Filter, Listing, Slot
 CAPTION_LIMIT = 1024  # photo caption, in Telegram's units (see tg_len)
 TEXT_LIMIT = 4096
 TITLE_LIMIT = 200
+PAGE_SIZE = 10  # listings per page of an alert table
+MORE_DATES = 2  # extra new dates of one listing shown in the table; its card has all
+CITY_LIMIT = 11  # a table row has to fit a phone screen (~33 monospace characters)
 
 _PLURAL = {"fish": "fish", "poultry": "poultry"}
 PET_EMOJI = {
@@ -79,26 +83,35 @@ def _title(listing: Listing, limit: int = TITLE_LIMIT) -> str:
     return escape(title)
 
 
+def subscriptions_label(sub_ids: Sequence[int]) -> str:
+    return ("Subscriptions " if len(sub_ids) > 1 else "Subscription ") + ", ".join(f"#{i}" for i in sub_ids)
+
+
 def render_alert(
-    listing: Listing, slots: list[Slot], sub_ids: list[int], source_title: str
+    listing: Listing,
+    slots: list[Slot],
+    sub_ids: list[int],
+    source_title: str,
+    *,
+    limit: int = CAPTION_LIMIT,  # a photo caption; a text message can take TEXT_LIMIT
 ) -> tuple[str, InlineKeyboardMarkup]:
     head = [f"🏡 <b>{_title(listing)}</b>", "", f"📍 {escape(listing.place)}"]
     if listing.pets:
         head.append(escape(pets_line(listing.pets)))
     head += ["", "🆕 <b>New dates:</b>" if len(slots) > 1 else "🆕 <b>New date:</b>"]
-    subs = ", ".join(f"#{i}" for i in sub_ids)
-    tail = ["", f"🔔 Subscription {subs} · {escape(source_title)}"]
+    tail = ["", f"🔔 {subscriptions_label(sub_ids)} · {escape(source_title)}"]
     blocks = [slot_lines(s) for s in slots]
 
     def build(shown: int) -> str:
         body = blocks[:shown]
-        if shown < len(blocks):
-            body.append(f"➕ <i>… and {len(blocks) - shown} more dates</i>")
+        hidden = len(blocks) - shown
+        if hidden:
+            body.append(f"➕ <i>… and {hidden} more date{'' if hidden == 1 else 's'}</i>")
         return "\n".join(head + body + tail)
 
     shown = len(blocks)
     text = build(shown)
-    while tg_len(text) > CAPTION_LIMIT and shown > 1:
+    while tg_len(text) > limit and shown > 1:
         shown -= 1
         text = build(shown)
     markup = InlineKeyboardMarkup(
@@ -107,28 +120,44 @@ def render_alert(
     return text, markup
 
 
-def render_digest(items: list[tuple[Listing, list[Slot]]]) -> tuple[str, int]:
-    """The text and how many items fit into it: the worker won't mark the rest
-    and will send them next tick."""
-    blocks: list[str] = []
+def flag(code: str | None) -> str:
+    """`pt` → 🇵🇹 (two regional indicator letters); a pin if the code is unknown."""
+    if not code or len(code) != 2 or not code.isascii() or not code.isalpha():
+        return "📍"
+    return "".join(chr(0x1F1E6 + ord(ch) - ord("a")) for ch in code.lower())
 
-    def text(n: int) -> str:
-        return "\n\n".join([f"📋 <b>{n} more new listings</b>", *blocks])
 
-    for listing, slots in items:
-        dates = ", ".join(date_range(s.start, s.end) for s in slots[:2])
-        if len(slots) > 2:
-            dates += f" (+{len(slots) - 2})"
-        block = (
-            f'{len(blocks) + 1}. 🏡 <a href="{escape(listing.url)}">{_title(listing, 80)}</a>\n'
-            f"     📍 {escape(listing.place)}\n"
-            f"     📅 {dates}"
-        )
-        blocks.append(block)
-        if tg_len(text(999)) > TEXT_LIMIT:
-            blocks.pop()
-            break
-    return text(len(blocks)), len(blocks)
+def city(listing: Listing) -> str:
+    """The first part of the place ("Espiche" of "Espiche, Faro, Portugal"),
+    short enough for a table row on a phone."""
+    name = listing.place.split(",")[0].strip() or country_name(listing.country)
+    return name if len(name) <= CITY_LIMIT else name[: CITY_LIMIT - 1].rstrip(" -") + "…"
+
+
+def _row(n: str, slot: Slot, where: str = "") -> str:
+    dates = f"{slot.start:%d.%m}–{slot.end:%d.%m}"
+    return f"{n:>2} {dates:<11} {slot.days:>4} {where}".rstrip()
+
+
+def render_table(items: Sequence[tuple[Listing, Sequence[Slot], Sequence[int]]], page: int) -> str:
+    """One page of several new listings as a monospace table: number, dates,
+    days, place — in the given order (nearest dates first). More new dates of
+    the same listing get lines of their own, without a number."""
+    sub_ids = sorted({i for _, _, subs in items for i in subs})
+    rows = [f"{'#':>2} {'Dates':<11} {'Days':>4} Where"]
+    first = page * PAGE_SIZE
+    for n, (listing, slots, _) in enumerate(items[first : first + PAGE_SIZE], start=first + 1):
+        rows.append(_row(str(n), slots[0], f"{flag(listing.country_code)} {escape(city(listing))}"))
+        rows += [_row("", s) for s in slots[1 : 1 + MORE_DATES]]
+        if len(slots) > 1 + MORE_DATES:
+            rows.append(f"{'':>2} + {len(slots) - 1 - MORE_DATES} more")
+    return "\n".join(
+        [
+            f"🔔 <b>{len(items)} new sits</b> · {subscriptions_label(sub_ids)}",
+            "<pre>" + "\n".join(rows) + "</pre>",
+            "👇 Tap a number for details",
+        ]
+    )
 
 
 def describe_filter(flt: Filter) -> str:

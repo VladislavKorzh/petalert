@@ -11,7 +11,9 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.methods import SendMessage, SendPhoto
 from aiogram.types import Chat, Message
 
+from petalert.bot.browse import Browse, unpack
 from petalert.bot.notify import TelegramOutbox
+from petalert.db import Store
 from petalert.models import Listing, Slot
 from petalert.scheduler import ChatGone
 
@@ -42,10 +44,13 @@ class Session(BaseSession):
         yield b""
 
 
+def outbox(session: Session, *, pause: float = 0) -> TelegramOutbox:
+    return TelegramOutbox(Bot("42:TEST", session=session), {"ths": "THS"}, Store(":memory:"), pause=pause)
+
+
 def alert(errors) -> list:
     session = Session(errors)
-    outbox = TelegramOutbox(Bot("42:TEST", session=session), {"ths": "THS"}, pause=0)
-    asyncio.run(outbox.alert(1, LISTING, SLOTS, [1]))
+    asyncio.run(outbox(session).alert(1, LISTING, SLOTS, [1]))
     return session.sent
 
 
@@ -88,12 +93,43 @@ def test_throttle_waits_before_sending_not_after(monkeypatch):
 
     monkeypatch.setattr("petalert.bot.notify.asyncio.sleep", fake_sleep)
     session = Session({})
-    outbox = TelegramOutbox(Bot("42:TEST", session=session), {"ths": "THS"}, pause=10)
+    sender = outbox(session, pause=10)
 
     async def two():
-        await outbox.text(1, "a")
+        await sender.text(1, "a")
         assert waited == []  # nothing pending after a send: a cancel can't land between send and mark
-        await outbox.text(1, "b")
+        await sender.text(1, "b")
 
     asyncio.run(two())
     assert len(session.sent) == 2 and len(waited) == 1 and 9 < waited[0] <= 10
+
+
+def test_table_is_stored_and_its_buttons_point_to_it():
+    session = Session({})
+    sender = outbox(session)
+    other = Listing(**{**LISTING.__dict__, "id": "2", "url": "https://x/l/2/"})
+    asyncio.run(sender.listings(5, [(LISTING, SLOTS, [1]), (other, SLOTS, [1])]))
+    (sent,) = session.sent
+    assert isinstance(sent, SendMessage) and "<pre>" in sent.text and sent.link_preview_options.is_disabled
+    numbers = sent.reply_markup.inline_keyboard[0]
+    first = Browse.unpack(numbers[0].callback_data)
+    assert [b.text for b in numbers] == ["1", "2"] and (first.view, first.n) == ("card", 0)
+    stored = unpack(sender.store.alert_list(first.list_id, 5))
+    assert [i.listing for i in stored] == [LISTING, other] and stored[0].slots == SLOTS
+
+
+def test_table_stays_stored_when_the_send_fails():
+    # A timeout can come after Telegram delivered the message: its buttons must work.
+    session = Session({SendMessage: [lambda m: TelegramBadRequest(m, "Bad Request: message is too long")]})
+    sender = outbox(session)
+    with pytest.raises(TelegramBadRequest):  # the worker retries next tick
+        asyncio.run(sender.listings(5, [(LISTING, SLOTS, [1]), (LISTING, SLOTS, [1])]))
+    assert sender.store.conn.execute("SELECT COUNT(*) FROM alert_list").fetchone()[0] == 1
+
+
+def test_text_fallback_is_not_cut_to_the_caption_limit():
+    many = [Slot(str(i), date(2030, 1, 1), date(2030, 1, 10), True) for i in range(20)]
+    session = Session({SendPhoto: [lambda m: TelegramBadRequest(m, "Bad Request: wrong file identifier")]})
+    asyncio.run(outbox(session).alert(1, LISTING, many, [1]))
+    (sent,) = session.sent
+    assert isinstance(sent, SendMessage) and "more date" not in sent.text

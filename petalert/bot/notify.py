@@ -15,21 +15,22 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
-from aiogram.types import LinkPreviewOptions
 
+from ..db import Store
 from ..models import Listing, Slot
 from ..scheduler import ChatGone
-from .format import render_alert, render_digest
+from .browse import Item, list_message, pack
+from .format import TEXT_LIMIT, render_alert
+from .ui import NO_PREVIEW
 
 log = logging.getLogger(__name__)
 
-NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
-
 
 class TelegramOutbox:
-    def __init__(self, bot: Bot, source_titles: dict[str, str], *, pause: float = 1.0):
+    def __init__(self, bot: Bot, source_titles: dict[str, str], store: Store, *, pause: float = 1.0):
         self.bot = bot
         self.source_titles = source_titles
+        self.store = store
         self.pause = pause
         self._next_send = 0.0
 
@@ -60,8 +61,8 @@ class TelegramOutbox:
 
     async def alert(self, chat_id: int, listing: Listing, slots: list[Slot], sub_ids: list[int]) -> None:
         title = self.source_titles.get(listing.source, listing.source)
-        text, markup = render_alert(listing, slots, sub_ids, title)
         if listing.photo_url:
+            text, markup = render_alert(listing, slots, sub_ids, title)
             try:
                 await self._call(
                     self.bot.send_photo, chat_id=chat_id, photo=listing.photo_url,
@@ -71,17 +72,23 @@ class TelegramOutbox:
             except TelegramBadRequest as exc:
                 # Telegram couldn't fetch the photo by URL — the text matters more.
                 log.info("photo %s failed (%s), sending as text", listing.photo_url, exc)
+        text, markup = render_alert(listing, slots, sub_ids, title, limit=TEXT_LIMIT)
         await self._call(
             self.bot.send_message, chat_id=chat_id, text=text, reply_markup=markup,
             link_preview_options=NO_PREVIEW,
         )
 
-    async def digest(self, chat_id: int, items: list[tuple[Listing, list[Slot]]]) -> int:
-        text, included = render_digest(items)
+    async def listings(self, chat_id: int, items: list[tuple[Listing, list[Slot], list[int]]]) -> None:
+        shown = [Item(*item) for item in items]
+        # Stored first: its id goes into the buttons. Kept even if the send
+        # fails — a timeout can come after Telegram delivered the message, and
+        # its buttons must work; an orphan row is pruned with the rest.
+        list_id = self.store.add_alert_list(chat_id, pack(shown))
+        text, markup = list_message(shown, list_id)
         await self._call(
-            self.bot.send_message, chat_id=chat_id, text=text, link_preview_options=NO_PREVIEW,
+            self.bot.send_message, chat_id=chat_id, text=text, reply_markup=markup,
+            link_preview_options=NO_PREVIEW,
         )
-        return included
 
     async def text(self, chat_id: int, text: str) -> None:
         await self._call(self.bot.send_message, chat_id=chat_id, text=text)

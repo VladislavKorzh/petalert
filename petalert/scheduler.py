@@ -42,8 +42,7 @@ CATCHUP_AFTER = timedelta(hours=2)
 MAX_SCHEDULED_FULL = 4  # time-based full crawls per tick; baselines don't count
 TOP = 100  # listings a page-1 tick sees; fresh slots beyond it count as full_crawl_new
 PRUNE_EVERY = timedelta(hours=24)
-MAX_ALERTS_PER_CHAT = 10  # photo alerts per chat per tick; the rest go into one digest
-MAX_DIGEST = 30  # digest entries; whatever doesn't fit goes out next tick
+MAX_LIST = 50  # listings in one table message per chat per tick; the rest go out next tick
 FAIL_STREAK_ALERT = 3  # ~1.5 hours of a source failing in a row — tell the admin
 
 
@@ -53,8 +52,8 @@ class ChatGone(Exception):
 
 class Outbox(Protocol):
     async def alert(self, chat_id: int, listing: Listing, slots: list[Slot], sub_ids: list[int]) -> None: ...
-    async def digest(self, chat_id: int, items: list[tuple[Listing, list[Slot]]]) -> int:
-        """Returns how many of the first items actually fit into the message."""
+    async def listings(self, chat_id: int, items: list[tuple[Listing, list[Slot], list[int]]]) -> None:
+        """Several listings as one message, in the given order."""
         ...
     async def text(self, chat_id: int, text: str) -> None: ...
 
@@ -83,7 +82,12 @@ class _Pending:
 
     def ordered_slots(self) -> list[Slot]:
         slots = {k: s for per_sub in self.by_sub.values() for k, s in per_sub.items()}
-        return sorted(slots.values(), key=lambda s: s.start)
+        return sorted(slots.values(), key=lambda s: (s.start, s.end))
+
+    def order(self) -> tuple:
+        """Nearest new dates first."""
+        first = self.ordered_slots()[0]
+        return first.start, first.end, self.listing.source, self.listing.id
 
 
 @dataclass
@@ -140,9 +144,9 @@ class Worker:
                     # source is down, that would be a hot request loop.
                     await self.tick(only_baselining=True)
                 if self._last_prune is None or now - self._last_prune >= PRUNE_EVERY:
-                    delivered, states = self.store.prune(now.date())
+                    delivered, states, lists = self.store.prune(now.date())
                     self._last_prune = now
-                    log.info("prune: delivered=%d query_state=%d", delivered, states)
+                    log.info("prune: delivered=%d query_state=%d alert_list=%d", delivered, states, lists)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -322,36 +326,30 @@ class Worker:
             log.exception("failed to message chat %s", chat_id)
 
     async def _deliver(self, chat_id: int, items: list[_Pending]) -> int:
-        sent = 0
+        """One new listing: its photo card. More: one table message, nearest
+        dates first, each row opening the card (bot/browse.py)."""
+        items = sorted(items, key=_Pending.order)
+        batch = items[:MAX_LIST]
+        if len(items) > MAX_LIST:
+            log.info("chat %s: %d new listings, %d go out next tick", chat_id, len(items), len(items) - MAX_LIST)
         try:
-            for item in items[:MAX_ALERTS_PER_CHAT]:
-                try:
-                    await self.outbox.alert(chat_id, item.listing, item.ordered_slots(), sorted(item.subs))
-                except ChatGone:
-                    raise
-                except Exception:
-                    log.exception("alert %s to chat %s failed — will retry next tick", item.listing.id, chat_id)
-                    continue
-                self._mark(item)
-                sent += 1
-            rest = items[MAX_ALERTS_PER_CHAT:]
-            included = 0
-            if rest:
-                try:
-                    included = await self.outbox.digest(
-                        chat_id, [(i.listing, i.ordered_slots()) for i in rest[:MAX_DIGEST]]
-                    )
-                except ChatGone:
-                    raise
-                except Exception:
-                    log.exception("digest to chat %s failed", chat_id)
-                for item in rest[:included]:
-                    self._mark(item)
-                sent += included
+            if len(batch) == 1:
+                (item,) = batch
+                await self.outbox.alert(chat_id, item.listing, item.ordered_slots(), sorted(item.subs))
+            else:
+                await self.outbox.listings(
+                    chat_id, [(i.listing, i.ordered_slots(), sorted(i.subs)) for i in batch]
+                )
         except ChatGone:
             self.store.pause_chat(chat_id)
             log.info("chat %s is gone — subscriptions paused", chat_id)
-        return sent
+            return 0
+        except Exception:
+            log.exception("alert to chat %s failed — will retry next tick", chat_id)
+            return 0
+        for item in batch:
+            self._mark(item)
+        return len(batch)
 
     def _mark(self, item: _Pending) -> None:
         for sub_id, slots in item.by_sub.items():

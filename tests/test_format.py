@@ -4,11 +4,14 @@ from datetime import date
 
 from petalert.bot.format import (
     CAPTION_LIMIT,
+    PAGE_SIZE,
     TEXT_LIMIT,
+    city,
     country_name,
     describe_filter,
+    flag,
     render_alert,
-    render_digest,
+    render_table,
     tg_len,
 )
 from petalert.models import Filter, Listing, Slot
@@ -44,7 +47,14 @@ def test_zero_applicants_is_highlighted():
 def test_caption_is_truncated_by_dropping_date_lines():
     text, _ = render_alert(listing(title="x" * 500), [slot(i) for i in range(30)], [1, 2], "THS")
     assert tg_len(text) <= CAPTION_LIMIT
-    assert "more dates" in text and text.endswith("🔔 Subscription #1, #2 · THS")
+    assert "more dates" in text and text.endswith("🔔 Subscriptions #1, #2 · THS")
+    full, _ = render_alert(listing(title="x" * 500), [slot(i) for i in range(30)], [1], "THS", limit=TEXT_LIMIT)
+    assert "more date" not in full and full.count("📅") == 30 and tg_len(full) <= TEXT_LIMIT
+
+
+def test_one_hidden_date_is_singular():
+    text, _ = render_alert(listing(title="x" * 145), [slot(i) for i in range(13)], [1], "THS")
+    assert text.count("📅") == 12 and "… and 1 more date</i>" in text
 
 
 def test_html_is_escaped():
@@ -52,13 +62,61 @@ def test_html_is_escaped():
     assert "&lt;Cats &amp; Dogs&gt;" in text
 
 
-def test_digest_reports_how_many_items_fit():
-    items = [(listing(title="y" * 200, lid=str(i)), [slot(i)]) for i in range(40)]
-    text, included = render_digest(items)
-    assert tg_len(text) <= TEXT_LIMIT
-    assert 0 < included < 40
-    assert text.count("<a href") == included
-    assert text.startswith(f"📋 <b>{included} more new listings</b>")
+def dated(i: str, start: str, end: str) -> Slot:
+    return Slot(i, date.fromisoformat(start), date.fromisoformat(end), True)
+
+
+def placed(lid: str, place: str, code: str | None) -> Listing:
+    return Listing(
+        source="ths", id=lid, title="t", url=f"https://x/l/{lid}/", continent="europe",
+        country="x", place=place, photo_url=None, pets=(), country_code=code,
+    )
+
+
+def test_table_layout():
+    items = [
+        (placed("1", "Kungsbacka, Halland, Sweden", "se"), [dated("a", "2026-11-02", "2026-11-09")], [1]),
+        (
+            placed("2", "Villefranche-sur-Mer, Provence, France", "fr"),
+            [dated("b", "2026-12-09", "2027-01-09"), dated("c", "2027-02-05", "2027-02-20")],
+            [1, 3],
+        ),
+        (placed("3", "<Odd & Co>", None), [dated("d", "2027-03-01", "2027-06-01")], [1]),
+    ]
+    assert render_table(items, 0) == (
+        "🔔 <b>3 new sits</b> · Subscriptions #1, #3\n"
+        "<pre> # Dates       Days Where\n"
+        " 1 02.11–09.11    7 🇸🇪 Kungsbacka\n"
+        " 2 09.12–09.01   31 🇫🇷 Villefranc…\n"
+        "   05.02–20.02   15\n"
+        " 3 01.03–01.06   92 📍 &lt;Odd &amp; Co&gt;</pre>\n"
+        "👇 Tap a number for details"
+    )
+
+
+def test_table_pages_and_many_dates():
+    one = (placed("1", "Lisbon", "pt"), [dated(str(i), "2026-12-01", "2026-12-10") for i in range(5)], [2])
+    items = [one] * (PAGE_SIZE + 3)
+    first = render_table(items, 0)
+    assert first.startswith(f"🔔 <b>{PAGE_SIZE + 3} new sits</b> · Subscription #2\n")
+    assert first.count("Lisbon") == PAGE_SIZE and first.count("+ 2 more") == PAGE_SIZE
+    second = render_table(items, 1)
+    assert second.count("Lisbon") == 3 and f"\n{PAGE_SIZE + 1:>2} 01.12" in second
+    # A full page of listings with dates still fits a message and a phone row.
+    assert tg_len(first) < TEXT_LIMIT
+    rows = first.split("<pre>")[1].split("</pre>")[0].split("\n")
+    assert max(len(r) for r in rows) <= 34
+
+
+def test_city_is_cut_without_a_dangling_space():
+    assert city(placed("1", "Frankfurt am Main, Hesse, Germany", "de")) == "Frankfurt…"
+    assert city(placed("1", "Lisbon, Portugal", "pt")) == "Lisbon"
+    assert city(placed("1", "", "pt")) == "X"  # no place: the country slug
+
+
+def test_flag():
+    assert flag("pt") == "🇵🇹" and flag("GB") == "🇬🇧"
+    assert flag(None) == flag("") == flag("xyz") == flag("1a") == "📍"
 
 
 def test_describe_filter():
