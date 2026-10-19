@@ -109,8 +109,8 @@ def test_open_end_dash_is_not_an_exclusion():
         ("eu 1.12.2026 - 20.12.2026 - 1.01.2027", "At most two dates"),
         ("eu 1.10.2026 - 10.10.2026", "have passed"),
         ("eu 18.10.2026", "have passed"),  # today
-        ("eu ±31 30.11.2026", "at most 30"),
-        ("eu +31 30.11.2026", "at most 30"),
+        ("eu ±61 30.11.2026", "at most 60"),
+        ("eu +61 30.11.2026", "at most 60"),
         ("eu ±3 ±4 30.11.2026", "One margin per side"),
         ("eu ±3 +2 30.11.2026", "One margin per side"),
         ("- 30.11.2026 pt", "lone '-'"),  # not "everywhere except Portugal"

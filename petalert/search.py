@@ -35,7 +35,7 @@ from .sources.base import Source, TooBroad
 log = logging.getLogger(__name__)
 
 MAX_RESULTS = 100  # listings in one result: 10 pages of the table, nearest first
-MAX_FLEX = 30  # days, on either side
+MAX_FLEX = 60  # days, on either side
 
 # ±3 / +-3 / +/-3 (both sides), +5 (after), -2 (before). A minus right before
 # the number only, not inside a date (2026-11-30) or a range (1.12 -20.12).

@@ -14,7 +14,8 @@ needed for either:
   (`/sites`, all on by default). A site you turn on is indexed silently first.
 - Only news: a listing (re)published after you subscribed, or dates created
   after you subscribed. On THS an old listing the bot merely sees for the first
-  time (or a sit that only re-opens) is noted silently, never alerted.
+  time (or a sit that only re-opens) is noted silently, never alerted. Nor is
+  a sit already sent whose dates the host deleted and added again.
   MindMyHouse has no publication times or date ids, so there any sit or date
   range not on the site when you subscribed counts as new — including edited
   dates.
@@ -45,7 +46,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
                            is silently "seen" (new, resumed, or the site just turned on)
                          · page 1 every tick (the whole filter if ≤ 300 results),
                            full crawl every 3 h / after downtime
-                         · dedup by date-slot id, marked only after a successful send
+                         · dedup by date-slot id and by listing + dates,
+                           marked only after a successful send
                          · news = published after the baseline, or a slot id above
                            the highest one the baseline saw (THS ids grow over time)
 ```
@@ -111,7 +113,7 @@ opens the sit on its site:
   `-xx` (also inside `eu(…)`) leaves a country out. No place = anywhere.
   Matching is by the listing's country code, which both sites give.
 - `±N` (`+-N`, `+/-N`) widens the range of start dates on both sides, `+N`
-  only after, `-N` only before (up to 30 days each); how long a sit lasts
+  only after, `-N` only before (up to 60 days each); how long a sit lasts
   doesn't matter. A search starts from tomorrow.
 - At most 100 sits, nearest start first; the reply says when there are more.
 

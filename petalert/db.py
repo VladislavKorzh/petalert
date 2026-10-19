@@ -64,7 +64,7 @@ CREATE INDEX IF NOT EXISTS subscription_chat ON subscription(chat_id);
 -- Slots a subscription already knows about: sent, or seen during baseline.
 CREATE TABLE IF NOT EXISTS delivered (
     sub_id   INTEGER NOT NULL REFERENCES subscription(id) ON DELETE CASCADE,
-    slot_key TEXT NOT NULL,                -- "ths:<assignment_id>"
+    slot_key TEXT NOT NULL,                -- models.slot_keys: "ths:<assignment_id>", "ths:<listing_id>-<start>-<end>"
     end_date TEXT NOT NULL,                -- the row can be pruned after this date
     at       TEXT NOT NULL,
     PRIMARY KEY (sub_id, slot_key)

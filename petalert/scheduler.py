@@ -30,11 +30,11 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Protocol
 
 from .db import Store, Subscription, Watch, utcnow
-from .models import Filter, Listing, Slot, appeared_after, listing_matches, matching_slots, slot_key
+from .models import Filter, Listing, Slot, appeared_after, listing_matches, matching_slots, slot_keys
 from .sources.base import Source
 
 log = logging.getLogger(__name__)
@@ -72,7 +72,8 @@ class _Pending:
 
     def add(self, sub: Subscription, slot: Slot) -> None:
         self.subs[sub.id] = sub
-        self.by_sub.setdefault(sub.id, {})[slot_key(self.listing, slot)] = slot
+        # By listing and dates: two slot ids with the same dates are one sit.
+        self.by_sub.setdefault(sub.id, {})[slot_keys(self.listing, slot)[-1]] = slot
 
     def keep(self, alive: set[tuple[int, str]]) -> "_Pending | None":
         """Only the subscriptions still watching this site; None if nothing is left."""
@@ -100,6 +101,11 @@ class TickStats:
     sent: int = 0
     failed: int = 0
     full_crawl_new: int = 0  # new slots only a full crawl could see (beyond page 1)
+
+
+def _keys(pairs) -> list[tuple[str, date]]:
+    """(key, end date) rows for `delivered`: every key of every slot."""
+    return [(key, slot.end) for listing, slot in pairs for key in slot_keys(listing, slot)]
 
 
 def _needs_baseline(watch: Watch) -> bool:
@@ -292,14 +298,26 @@ class Worker:
             for watch in watches:
                 sub = watch.sub
                 known = self.store.delivered_keys(sub.id)
-                fresh = [(l, s) for l, s in matches if slot_key(l, s) not in known]
+                fresh: list[tuple[Listing, Slot]] = []
+                gaps: list[tuple[str, date]] = []
+                for l, s in matches:
+                    both = slot_keys(l, s)
+                    if known.isdisjoint(both):
+                        fresh.append((l, s))
+                    else:
+                        # Known by one key only (marked before slots had two, or
+                        # the dates re-created under a new id): add the other, so
+                        # whichever survives keeps the sit known.
+                        gaps += [(k, s.end) for k in both if k not in known]
+                if gaps:
+                    self.store.mark_delivered(sub, gaps)
                 if _needs_baseline(watch):
                     if partial:
                         continue  # a baseline needs the full crawl; retried next tick
-                    keys = [(slot_key(l, s), s.end) for l, s in fresh]
+                    keys = _keys(fresh)
                     if watch.reindex:  # quiet: no "is live" message, the baseline time stays
                         if self.store.finish_reindex(sub, source_key, keys):
-                            log.info("#%d: re-indexed %s, %d slots marked seen", sub.id, source_key, len(keys))
+                            log.info("#%d: re-indexed %s, %d slots marked seen", sub.id, source_key, len(fresh))
                         continue
                     if self.store.finish_baseline(sub, source_key, keys, watermark=watermark, at=now):
                         n = len({l.id for l, _ in matches})
@@ -309,7 +327,7 @@ class Worker:
                 # reach): note it silently instead of alerting.
                 old = [(l, s) for l, s in fresh if not appeared_after(l, s, watch.baseline_at, watch.watermark)]
                 if old:
-                    self.store.mark_delivered(sub, [(slot_key(l, s), s.end) for l, s in old])
+                    self.store.mark_delivered(sub, _keys(old))
                     log.info("#%d: %d old slots seen for the first time, not alerted", sub.id, len(old))
                     fresh = [f for f in fresh if f not in old]
                 stats.fresh += len(fresh)
@@ -395,7 +413,7 @@ class Worker:
 
     def _mark(self, item: _Pending) -> None:
         for sub_id, slots in item.by_sub.items():
-            self.store.mark_delivered(item.subs[sub_id], [(k, s.end) for k, s in slots.items()])
+            self.store.mark_delivered(item.subs[sub_id], _keys((item.listing, s) for s in slots.values()))
 
     async def _health(self, failures: dict[str, Exception], succeeded: set[str]) -> None:
         for source_key in failures.keys() | succeeded:

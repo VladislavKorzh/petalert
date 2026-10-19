@@ -135,6 +135,56 @@ def test_republished_listing_alerts_only_its_new_dates(env):
     assert env.outbox.alerts == [(10, "1", ["new"], [sub])]
 
 
+def test_same_dates_under_a_new_id_are_not_news(env):
+    env.source.listings = []
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("a"))]
+    env.tick()
+    assert [a[2] for a in env.outbox.alerts] == [["a"]]
+
+    env.advance()  # the host deleted the slot and added the same dates again
+    env.source.listings = [listing("1", slot("b"))]
+    env.tick()
+    assert len(env.outbox.alerts) == 1
+    assert "ths:b" in env.store.delivered_keys(sub)  # known by both keys from now on
+
+    env.advance()  # other dates are another sit
+    env.source.listings = [listing("1", slot("b"), slot("c", "2026-12-02", "2026-12-10"))]
+    env.tick()
+    assert [a[2] for a in env.outbox.alerts] == [["a"], ["c"]]
+
+
+def test_a_slot_known_by_its_id_only_gets_its_dates_key(env):
+    # Rows from before slots had two keys: the next tick that sees the slot adds the other.
+    env.source.listings = [listing("1", slot("a"))]
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    env.store.conn.execute("DELETE FROM delivered WHERE slot_key = 'ths:1-20261201-20261210'")
+    env.advance()
+    env.tick()
+    assert env.store.delivered_keys(sub) == {"ths:a", "ths:1-20261201-20261210"}
+    env.advance()
+    env.source.listings = [listing("1", slot("b"))]
+    env.tick()
+    assert env.outbox.alerts == []
+
+
+def test_two_ids_with_the_same_dates_are_one_sit(env):
+    env.source.listings = []
+    sub = env.store.add_subscription(10, FLT)
+    env.tick()
+    env.advance()
+    env.source.listings = [listing("1", slot("a"), slot("b"))]
+    env.tick()
+    ((_, _, slots, _),) = env.outbox.alerts
+    assert len(slots) == 1
+    env.advance()
+    env.tick()
+    assert len(env.outbox.alerts) == 1 and "ths:a" in env.store.delivered_keys(sub)
+
+
 def test_reopened_slot_is_alerted(env):
     env.source.listings = [listing("1", slot("a", is_open=False))]
     env.store.add_subscription(10, FLT)
@@ -156,7 +206,7 @@ def test_two_subscriptions_of_one_chat_get_one_message(env):
     env.source.listings = [listing("1", slot("s"))]
     env.tick()
     assert env.outbox.alerts == [(10, "1", ["s"], [a, b])]
-    assert env.store.delivered_keys(a) == env.store.delivered_keys(b) == {"ths:s"}
+    assert env.store.delivered_keys(a) == env.store.delivered_keys(b) == {"ths:s", "ths:1-20261201-20261210"}
 
 
 def test_identical_filters_share_one_request(env):
@@ -204,7 +254,7 @@ def test_resume_rebaselines_silently(env):
     env.advance()
     env.tick(only_baselining=True)
     assert env.outbox.alerts == []
-    assert env.store.delivered_keys(sub) == {"ths:during_pause"}
+    assert env.store.delivered_keys(sub) == {"ths:during_pause", "ths:1-20261201-20261210"}
 
 
 def test_several_listings_go_out_as_one_table_nearest_dates_first(env):
@@ -586,7 +636,7 @@ def test_one_site_off_mid_tick_only_drops_that_sites_alerts(env):
     second.search = off_meanwhile
     env.tick()
     assert [a[1] for a in env.outbox.alerts] == ["1"] and env.outbox.lists == []
-    assert env.store.delivered_keys(sub) == {"ths:a"}
+    assert env.store.delivered_keys(sub) == {"ths:a", "ths:1-20261201-20261210"}
 
 
 def test_reindex_marks_quietly_and_keeps_alerting_after(env):

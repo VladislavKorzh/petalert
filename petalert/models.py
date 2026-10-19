@@ -178,3 +178,16 @@ def appeared_after(
 
 def slot_key(listing: Listing, slot: Slot) -> str:
     return f"{listing.source}:{slot.id}"
+
+
+def slot_keys(listing: Listing, slot: Slot) -> tuple[str, ...]:
+    """Every key a slot is known by: its id, then its listing and dates.
+
+    A host can delete a slot and add the same dates again under a new id (THS,
+    2026-10-18: one sit alerted twice that way). The same listing and dates is
+    the same sit, so a slot known by either key is not news. On MMH a slot's id
+    already is its listing and dates: one key.
+    """
+    own = slot_key(listing, slot)
+    by_dates = f"{listing.source}:{listing.id}-{slot.start:%Y%m%d}-{slot.end:%Y%m%d}"
+    return (own,) if own == by_dates else (own, by_dates)
