@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 
 import pytest
 
@@ -119,11 +120,38 @@ def test_open_end_dash_is_not_an_exclusion():
         ("eu ±3 1.1.0001 -", "Check the year"),
         ("eu 31.12.9999", "Check the year"),
         ("eu 32.13", "doesn't exist"),
+        ("eu 30.11.2026 min 0", "1 to 365"),
+        ("eu 30.11.2026 min 400", "1 to 365"),
+        ("eu min 7 30.11.2026 min 14", "One minimum length"),
+        ("eu min 30.11.2026", "Unknown place 'min'"),  # a date, not a length
     ],
 )
 def test_errors_are_for_the_user(text, error):
     with pytest.raises(ValueError, match=error):
         parse(text, TODAY)
+
+
+@pytest.mark.parametrize(
+    "text, min_days",
+    [
+        ("eu 30.11.2026", None),
+        ("eu 30.11.2026 min 14", 14),
+        ("min14 eu 30.11.2026", 14),
+        ("eu, min 14 days, 30.11.2026", 14),
+        ("eu ±3 30.11.2026 - MIN: 7d", 7),
+        ("pt min 21 nights 1.12 - 20.12", 21),
+    ],
+)
+def test_a_minimum_length(text, min_days):
+    s = parse(text, TODAY)
+    assert s.min_days == min_days and s.start_from >= d(27, 11)
+
+
+def test_a_minimum_length_leaves_places_and_margins_alone():
+    s = parse("eu(-uk) +5 min 10 30.11.2026", TODAY)
+    assert (s.continents, s.exclude, s.start_from, s.start_to, s.min_days) == (
+        ("europe",), ("gb",), d(30, 11), d(5, 12), 10
+    )
 
 
 def test_plain_text_counts_as_a_search_only_with_a_date():
@@ -159,11 +187,29 @@ def test_slots_are_the_open_ones_starting_in_range():
     assert s.slots(listing("2", "pt", d(30, 11), is_open=False)) == []
 
 
+def stays(lid: str, *spans: tuple[date, int]) -> Listing:
+    """A listing in Portugal with open slots of (start, days)."""
+    return replace(
+        listing(lid, "pt"),
+        slots=tuple(Slot(f"{lid}-{i}", s, s + timedelta(days=n), True) for i, (s, n) in enumerate(spans)),
+    )
+
+
+def test_a_minimum_length_keeps_the_long_slots():
+    s = parse("eu ±3 30.11.2026 min 14", TODAY)
+    sit = stays("1", (d(27, 11), 5), (d(28, 11), 14), (d(1, 12), 30))
+    assert [(x.start, x.days) for x in s.slots(sit)] == [(d(28, 11), 14), (d(1, 12), 30)]
+    assert s.slots(stays("2", (d(29, 11), 13))) == []
+
+
 def test_scopes_ask_for_continents_and_the_countries_outside_them():
     s = parse("eu, pt, us, -gb 30.11.2026", TODAY)
     assert s.scopes() == [
         Filter("europe", date_from=d(30, 11)),
         Filter("north-america", country="united-states", date_from=d(30, 11)),
+    ]
+    assert parse("pt 30.11.2026 min 14", TODAY).scopes() == [
+        Filter("europe", country="portugal", date_from=d(30, 11), min_days=14)
     ]
 
 
@@ -204,6 +250,18 @@ def test_reading_stops_once_past_the_range():
     found = go(parse("eu(-uk) ±3 30.11.2026", TODAY), site)
     assert site.read == 2
     assert [l.id for l, _ in found.items] == ["1", "3"] and not found.more and not found.problems
+
+
+def test_with_a_minimum_reading_stops_by_the_first_long_slot():
+    # THS then sorts by the first slot long enough: a short one earlier doesn't count.
+    pages = [
+        [stays("1", (d(28, 11), 20))],
+        [stays("2", (d(29, 11), 3), (d(6, 12), 20))],  # long from 6 Dec: past 3 Dec
+        [stays("3", (d(7, 12), 20))],
+    ]
+    site = Site("ths", pages)
+    found = go(parse("eu ±3 30.11.2026 min 14", TODAY), site)
+    assert site.read == 2 and [l.id for l, _ in found.items] == ["1"]
 
 
 def test_results_stop_at_the_cap_nearest_first():

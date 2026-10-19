@@ -413,6 +413,26 @@ def test_by_start_fails_loudly_when_the_sort_is_ignored():
     assert len([n for n in fake.notices if "no longer sorts by start date" in n]) == 1  # once, not per search
 
 
+def test_by_start_with_a_minimum_length_goes_by_the_first_long_slot():
+    # Verified live 2026-10-19: with durationInDays THS sorts by the first slot
+    # that long, so a shorter one starting earlier is no sign of a broken sort.
+    def sit(i: int, *spans: tuple[date, int]) -> dict:
+        base = starting(i, spans[0][0])
+        slots = [
+            dict(base["assignments"][0], id=str(9100 + 10 * i + n), startDate=s.isoformat(),
+                 endDate=(s + timedelta(days=days)).isoformat())
+            for n, (s, days) in enumerate(spans)
+        ]
+        return dict(base, assignments=slots)
+
+    items = [sit(0, (date(2026, 11, 10), 20)), sit(1, (date(2026, 11, 2), 3), (date(2026, 11, 12), 20))]
+    fake = Fake(lambda r: httpx.Response(200, json={"results": items, "total": 2}))
+    assert read(fake, Filter("europe", min_days=14)) == [["0", "1"]]
+    assert fake.queries()[0]["filters"]["assignments"]["durationInDays"] == {"minimum": 14}
+    with pytest.raises(SourceError, match="start-date sort"):
+        read(Fake(lambda r: httpx.Response(200, json={"results": items, "total": 2})), Filter("europe"))
+
+
 def test_by_start_past_the_page_number_limit_is_too_broad():
     fake = Fake(StartFeed([date(2026, 11, 1)] * 1050))
     with pytest.raises(TooBroad, match="nearest 1000"):

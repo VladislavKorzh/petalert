@@ -47,8 +47,9 @@ class Source(Protocol):
 
     def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
         """For /search: listings in the filter's place with an open slot
-        starting on or after `flt.date_from`, ordered by the first such start
-        (nearest first), a page at a time. The caller stops reading once it is
-        past its dates, and filters locally: a page may hold more than asked
-        (another country of the continent, say). An async generator."""
+        starting on or after `flt.date_from` (and at least `flt.min_days`
+        long), ordered by the first such start (nearest first), a page at a
+        time. The caller stops reading once it is past its dates, and filters
+        locally: a page may hold more than asked (another country of the
+        continent, say). An async generator."""
         ...

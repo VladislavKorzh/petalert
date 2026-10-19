@@ -70,17 +70,18 @@ def test_every_ths_country_is_in_geo_on_the_same_continent():
             assert code and geo.continent(code) == continent, (continent, country.slug)
 
 
-def test_by_start_is_ordered_by_the_first_open_start():
+@pytest.mark.parametrize("min_days", [None, 14])
+def test_by_start_is_ordered_by_the_first_open_start(min_days):
     since = date.today() + timedelta(days=1)  # by_start's earliest
 
     async def two_pages(ths):
         pages = []
-        async for page in ths.by_start(Filter("europe", date_from=since)):
+        async for page in ths.by_start(Filter("europe", date_from=since, min_days=min_days)):
             pages.append(page)
             if len(pages) == 2:
                 break
         return pages
 
     pages = run(two_pages)  # by_start itself raises if the order breaks
-    keys = [first_open_start(l, since) for page in pages for l in page]
+    keys = [first_open_start(l, since, min_days) for page in pages for l in page]
     assert len(keys) > 150 and keys == sorted(keys)

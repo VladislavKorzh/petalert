@@ -312,11 +312,13 @@ class MindMyHouse:
 
     async def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
         """The whole site is one page: the continent's listings with an open
-        slot from `flt.date_from` on, nearest first. The country is left to the
-        caller (it matches on ISO codes)."""
+        slot from `flt.date_from` on (at least `flt.min_days` long), nearest
+        first. The country is left to the caller (it matches on ISO codes)."""
         today = self._clock()
         since = max(today, flt.date_from or today)
-        keyed = [(first_open_start(l, since), l) for l in await self._all() if l.continent == flt.continent]
+        keyed = [
+            (first_open_start(l, since, flt.min_days), l) for l in await self._all() if l.continent == flt.continent
+        ]
         yield [l for k, l in sorted((kl for kl in keyed if kl[0]), key=lambda kl: (kl[0], kl[1].id))]
 
     async def countries(self, continent: str) -> list[Country]:

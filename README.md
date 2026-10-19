@@ -107,6 +107,7 @@ opens the sit on its site:
 | `eu(-uk), ±3, 30.11.2026 -` | the same, from 27 Nov on (nearest first) |
 | `pt, es, 1.12 - 20.12` | in Portugal or Spain, 1 – 20 Dec (no year: the next one) |
 | `north america 2026-12-01` | in North America on 1 Dec |
+| `eu, 1.12 - 20.12, min 14` | in Europe, 1 – 20 Dec, 14 days or longer |
 
 - Places: `eu`/`europe`, `asia`, `africa`, `oceania`, `north america`,
   `south america`; countries by ISO code (`pt`, `uk` = `gb`) or name;
@@ -114,7 +115,10 @@ opens the sit on its site:
   Matching is by the listing's country code, which both sites give.
 - `±N` (`+-N`, `+/-N`) widens the range of start dates on both sides, `+N`
   only after, `-N` only before (up to 60 days each); how long a sit lasts
-  doesn't matter. A search starts from tomorrow.
+  doesn't matter (but see `min N`). A search starts from tomorrow.
+- `min N` (`min 14`, `min 14 days`) keeps sits of at least N days, counted as
+  the sites count them (end − start). THS gets it in the query and then sorts
+  by the first slot that long, so a long minimum reads fewer pages.
 - At most 100 sits, nearest start first; the reply says when there are more.
 
 THS has a "Start date" sort (`SIT_START_DATE`, found in the site's JS), so a

@@ -252,6 +252,21 @@ def test_by_start_is_the_continent_nearest_start_first():
     assert {l.continent for l in page} == {"europe"} and len({l.country for l in page}) > 1  # country left to the caller
 
 
+def test_by_start_with_a_minimum_length_orders_by_the_first_long_slot():
+    fake = Fake()
+    since = date(2026, 12, 1)
+
+    async def go():
+        long = [page async for page in fake.mmh.by_start(Filter("europe", date_from=since, min_days=21))]
+        every = [page async for page in fake.mmh.by_start(Filter("europe", date_from=since))]
+        return long, every
+
+    (page,), (everything,) = fake.run(go)
+    keys = [first_open_start(l, since, 21) for l in page]
+    assert page and keys == sorted(keys) and None not in keys
+    assert len(page) < len(everything)  # some only have shorter sits
+
+
 def test_goes_direct_even_when_the_proxy_is_always_on():
     used: list[bool] = []
 

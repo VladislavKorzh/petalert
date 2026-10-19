@@ -39,6 +39,7 @@ SEARCH_HELP = (
     "🌍 Places: <code>eu</code>, <code>asia</code>, <code>africa</code>, <code>oceania</code>, "
     "<code>north america</code>, <code>south america</code>; countries by code "
     "(<code>pt</code>, <code>uk</code>) or name; <code>-xx</code> leaves one out. None = anywhere.\n"
+    "⏳ <code>min 14</code> — only sits of 14 days or longer.\n"
     f"ℹ️ Searches the sites on in /sites, nearest start first, up to {MAX_RESULTS} sits."
 )
 BUSY = "⏳ A search is already running — wait for it to finish."
@@ -49,7 +50,8 @@ class SearchStates(StatesGroup):
 
 
 def describe(search: Search) -> tuple[str, str]:
-    """(where, when) as plain text: "Europe except United Kingdom", "27 Nov – 3 Dec 2026"."""
+    """(where, when) as plain text: "Europe except United Kingdom",
+    "27 Nov – 3 Dec 2026" (with " · 14+ days" for a minimum length)."""
     if set(search.continents) == set(CONTINENTS) and not search.countries:
         where = "Anywhere"
     else:
@@ -62,6 +64,8 @@ def describe(search: Search) -> tuple[str, str]:
         when = f"{search.start_from:%-d %b %Y}"
     else:
         when = date_range(search.start_from, search.start_to)
+    if search.min_days:
+        when += f" · {search.min_days}+ days"
     return where, when
 
 

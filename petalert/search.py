@@ -4,11 +4,13 @@
     eu(-uk), +5, 30.11.2026      starting 30 Nov – 5 Dec (-2 would be 28 – 30 Nov)
     eu(-uk), ±3, 30.11.2026 -    starting 27 Nov or later
     pt, es, 1.12 - 20.12         Portugal or Spain, starting in that range
+    eu, 1.12 - 20.12, min 14     the same in Europe, sits of 14 days or more
 
 Dates are a range of START dates (±N widens it on both sides, +N only after,
--N only before); how long a sit lasts doesn't matter. The range begins tomorrow at the earliest: a sit
-starting today is too late to apply for (and THS doesn't keep today's starts
-in its start-date order). Places are matched on the listing's ISO country code,
+-N only before); how long a sit lasts doesn't matter unless `min N` asks for
+at least N days (as the sites count: end − start). The range begins tomorrow
+at the earliest: a sit starting today is too late to apply for (and THS
+doesn't keep today's starts in its start-date order). Places are matched on the listing's ISO country code,
 which both sites give (`geo` knows each code's continent).
 
 Sites are read nearest start first (`Source.by_start`) and only until the
@@ -36,6 +38,7 @@ log = logging.getLogger(__name__)
 
 MAX_RESULTS = 100  # listings in one result: 10 pages of the table, nearest first
 MAX_FLEX = 60  # days, on either side
+MAX_DAYS = 365  # a minimum length, as in /new
 
 # ±3 / +-3 / +/-3 (both sides), +5 (after), -2 (before). A minus right before
 # the number only, not inside a date (2026-11-30) or a range (1.12 -20.12).
@@ -44,6 +47,10 @@ _FLEX = re.compile(
     r"(?P<days>\d{1,3})(?![\d.])(?:\s*d(?:ays?)?\b)?",
     re.IGNORECASE,
 )
+# min 14 / min14 / min 14d / min 14 days: sits at least that long
+_MIN_DAYS = re.compile(
+    r"(?<![\w-])min\.?\s*[:=]?\s*(?P<days>\d{1,3})(?![\d.])(?:\s*(?:d|days?|nights?)\b)?", re.IGNORECASE
+)
 # 2026-11-30, 30.11.2026, 30/11/2026, 30.11 or 30.11. (no year: see _resolve)
 _DATE = re.compile(
     r"(?<![\d.])(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?)(?!\d)(?!\.\d)\.?"
@@ -51,7 +58,7 @@ _DATE = re.compile(
 _RANGE = re.compile(r"\s*(?:[-–—]|to|till|until)?\s*", re.IGNORECASE)  # between two dates
 _OPEN_END = re.compile(r"[\s,]*[-–—](?![a-z])", re.IGNORECASE)  # "30.11.2026 -", but not "30.11.2026 -uk"
 _DASHES = "-–—"
-HELP_FORMAT = "Dates look like 30.11.2026, a margin like ±3, +5 or -2."
+HELP_FORMAT = "Dates look like 30.11.2026, a margin like ±3, +5 or -2, a minimum length like min 14."
 LONE_DASH = (
     "Can't read a lone '-'. A range of starts is 1.12.2026 - 20.12.2026, \"from then on\" is "
     "30.11.2026 -, and -uk leaves a country out."
@@ -66,6 +73,7 @@ class Search:
     continents: tuple[str, ...] = ()
     countries: tuple[str, ...] = ()  # ISO codes, lower case
     exclude: tuple[str, ...] = ()  # ISO codes; wins over the above
+    min_days: int | None = None  # a slot at least this long (Slot.days)
 
     def matches(self, listing: Listing) -> bool:
         code = listing.country_code
@@ -75,22 +83,24 @@ class Search:
         return listing.continent in self.continents or (code is not None and code in self.countries)
 
     def slots(self, listing: Listing) -> list[Slot]:
-        """Open slots starting within the range, nearest first."""
+        """Open slots starting within the range (and long enough), nearest first."""
         return sorted(
             (
                 s for s in listing.slots
                 if s.is_open and s.start >= self.start_from
                 and (self.start_to is None or s.start <= self.start_to)
+                and (self.min_days is None or s.days >= self.min_days)
             ),
             key=lambda s: (s.start, s.end),
         )
 
     def scopes(self) -> list[Filter]:
         """What to ask the sites: each continent, and each country outside them."""
-        scopes = [Filter(c, date_from=self.start_from) for c in self.continents]
+        when = {"date_from": self.start_from, "min_days": self.min_days}
+        scopes = [Filter(c, **when) for c in self.continents]
         for code in self.countries:
             if geo.continent(code) not in self.continents:
-                scopes.append(Filter(geo.continent(code), country=geo.slug(code), date_from=self.start_from))
+                scopes.append(Filter(geo.continent(code), country=geo.slug(code), **when))
         return scopes
 
 
@@ -217,8 +227,15 @@ def _places(text: str) -> tuple[list[str], list[str], list[str]]:
 
 
 def parse(text: str, today: date) -> Search:
-    """A query like `eu(-uk), ±3, 30.11.2026 -`. The ValueError message is
-    meant for the user."""
+    """A query like `eu(-uk), ±3, 30.11.2026 -, min 14`. The ValueError
+    message is meant for the user."""
+    lengths = list(_MIN_DAYS.finditer(text))
+    if len(lengths) > 1:
+        raise ValueError("One minimum length, like min 14.")
+    min_days = int(lengths[0]["days"]) if lengths else None
+    if min_days is not None and not 1 <= min_days <= MAX_DAYS:
+        raise ValueError(f"A minimum length is 1 to {MAX_DAYS} days.")
+    text = _blank(text, [m.span() for m in lengths])
     margins: dict[str, int] = {}  # days "before" and "after" the dates
     flexes = list(_FLEX.finditer(text))
     for m in flexes:
@@ -244,6 +261,7 @@ def parse(text: str, today: date) -> Search:
         continents=tuple(continents),
         countries=tuple(countries),
         exclude=tuple(exclude),
+        min_days=min_days,
     )
 
 
@@ -275,7 +293,7 @@ async def run(search: Search, sources: Sequence[Source]) -> Found:
                         if matched >= MAX_RESULTS:
                             more = True  # whatever comes next starts later
                             break
-                        last = first_open_start(page[-1], search.start_from) if page else None
+                        last = first_open_start(page[-1], search.start_from, search.min_days) if page else None
                         if search.start_to and last and last > search.start_to:
                             break  # and so does every listing after it
             except TooBroad as exc:

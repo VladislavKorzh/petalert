@@ -79,6 +79,7 @@ class FakeSource:
     during_search = None  # hook: runs while the "network" call is in flight
 
     async def by_start(self, flt):
+        self.last_scope = flt
         if self.during_search:
             await self.during_search()
         for page in self.start_pages:
@@ -582,6 +583,13 @@ def test_plain_text_with_a_date_is_a_search(h):
     assert texts(calls)[-1] == f"🔎 <b>Nothing found</b> · start 30 Nov {Y}\n🌍 Portugal"
     assert texts(h.text(f"eu(-asia) 30.11.{Y}"))[0].startswith("❌ Only countries can be left out")
     assert texts(h.text("hello"))[0].startswith("➕ /new")
+
+
+def test_search_with_a_minimum_length(h):
+    h.source.start_pages = [[sit("1", "pt", date(Y, 11, 30))]]  # 30 Nov – 10 Jan: long enough
+    calls = h.text(f"pt 30.11.{Y} min 14")
+    assert f"🔎 <b>1 open sit</b> · start 30 Nov {Y} · 14+ days" in edits(calls)[0].text
+    assert h.source.last_scope.min_days == 14
 
 
 def test_search_with_every_site_off_or_one_running(h):

@@ -331,7 +331,7 @@ class TrustedHousesitters:
         for page in range(1, RESULT_LIMIT // PER_PAGE + 1):
             known = set(seen)
             results, total = await self._page(flt, today, None, seen, page=page, sort=START_SORT)
-            keyed = [(first_open_start(l, since), l) for i, l in seen.items() if i not in known]
+            keyed = [(first_open_start(l, since, flt.min_days), l) for i, l in seen.items() if i not in known]
             keys = [k for k, _ in keyed if k is not None]  # (none: no open slot after all)
             if any(a > b for a, b in zip([last, *keys], keys)):
                 # The caller's early stop would silently cut results short.
