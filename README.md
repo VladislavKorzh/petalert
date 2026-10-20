@@ -114,7 +114,7 @@ opens the sit on its site:
   `-xx` (also inside `eu(…)`) leaves a country out. No place = anywhere.
   Matching is by the listing's country code, which both sites give.
 - `±N` (`+-N`, `+/-N`) widens the range of start dates on both sides, `+N`
-  only after, `-N` only before (up to 60 days each); how long a sit lasts
+  only after, `-N` only before (up to 180 days each); how long a sit lasts
   doesn't matter (but see `min N`). A search starts from tomorrow.
 - `min N` (`min 14`, `min 14 days`) keeps sits of at least N days, counted as
   the sites count them (end − start). THS gets it in the query and then sorts

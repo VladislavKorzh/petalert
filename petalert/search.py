@@ -37,7 +37,7 @@ from .sources.base import Source, TooBroad
 log = logging.getLogger(__name__)
 
 MAX_RESULTS = 100  # listings in one result: 10 pages of the table, nearest first
-MAX_FLEX = 60  # days, on either side
+MAX_FLEX = 180  # days, on either side
 MAX_DAYS = 365  # a minimum length, as in /new
 
 # ±3 / +-3 / +/-3 (both sides), +5 (after), -2 (before). A minus right before

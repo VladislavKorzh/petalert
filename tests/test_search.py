@@ -37,6 +37,7 @@ def test_the_users_example():
         ("eu(-uk), +5, 30.11.2026", d(30, 11), d(5, 12)),  # only after
         ("eu -2 30.11.2026", d(28, 11), d(30, 11)),  # only before
         ("eu +5 -2 30.11.2026", d(28, 11), d(5, 12)),
+        ("eu +180 30.11.2026", d(30, 11), d(29, 5, 2027)),  # the widest margin
         ("eu +5 days 30.11.2026 -", d(30, 11), None),
         ("eu 1.12 - 20.12 +5", d(1, 12), d(25, 12)),
         ("eu 1.12 -20.12", d(1, 12), d(20, 12)),  # a range, not a margin of 20
@@ -110,8 +111,8 @@ def test_open_end_dash_is_not_an_exclusion():
         ("eu 1.12.2026 - 20.12.2026 - 1.01.2027", "At most two dates"),
         ("eu 1.10.2026 - 10.10.2026", "have passed"),
         ("eu 18.10.2026", "have passed"),  # today
-        ("eu ±61 30.11.2026", "at most 60"),
-        ("eu +61 30.11.2026", "at most 60"),
+        ("eu ±181 30.11.2026", "at most 180"),
+        ("eu +181 30.11.2026", "at most 180"),
         ("eu ±3 ±4 30.11.2026", "One margin per side"),
         ("eu ±3 +2 30.11.2026", "One margin per side"),
         ("- 30.11.2026 pt", "lone '-'"),  # not "everywhere except Portugal"
