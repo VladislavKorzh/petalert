@@ -123,11 +123,16 @@ def test_table_pages_and_many_dates():
     items = [one] * (PAGE_SIZE + 3)
     first = render_table(items, 0, sites=SITES)
     assert first.startswith(f"🔔 <b>{PAGE_SIZE + 3} new sits</b> · Subscription #2\n")
-    assert first.count("Lisbon") == PAGE_SIZE and first.count("+ 2 more") == PAGE_SIZE
+    # A full page with two extra dates each would be over a message: one each fits.
+    assert first.count("Lisbon") == PAGE_SIZE and first.count("+ 3 more") == PAGE_SIZE
+    assert tg_len(first) <= TEXT_LIMIT
     second = render_table(items, 1, sites=SITES)
-    assert second.count("Lisbon") == 3 and f"\n{PAGE_SIZE + 1:>2} 01.12" in second
-    # A full page of listings with dates still fits a message and a phone row.
-    assert tg_len(first) < TEXT_LIMIT
+    assert second.count("Lisbon") == 3 and second.count("+ 2 more") == 3
+    assert f"\n{PAGE_SIZE + 1:>2} 01.12" in second
+    # A page of the widest rows, each with dozens of dates, fits too.
+    wide = (placed("1", "<Frankfurt am Main>", "de"), [dated(str(i), "2026-12-01", "2027-03-31") for i in range(99)], [2])
+    assert tg_len(render_table([wide] * PAGE_SIZE, 0, sites=SITES)) <= TEXT_LIMIT
+    # Rows still fit a phone.
     rows = first.split("<pre>")[1].split("</pre>")[0].split("\n")
     assert max(len(r) for r in rows) <= 35
 

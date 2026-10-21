@@ -19,8 +19,8 @@ from ..models import CONTINENTS, Filter, Listing, Slot
 CAPTION_LIMIT = 1024  # photo caption, in Telegram's units (see tg_len)
 TEXT_LIMIT = 4096
 TITLE_LIMIT = 200
-PAGE_SIZE = 10  # listings per page of an alert table
-MORE_DATES = 2  # extra new dates of one listing shown in the table; its card has all
+PAGE_SIZE = 50  # listings per page of an alert table: a tick's whole table (scheduler.MAX_LIST)
+MORE_DATES = 2  # extra new dates of one listing shown in the table (fewer if a page won't fit); its card has all
 CITY_LIMIT = 10  # a table row has to fit a phone screen (≤ 35 monospace characters)
 
 _PLURAL = {"fish": "fish", "poultry": "poultry"}
@@ -169,35 +169,46 @@ def render_table(
 ) -> str:
     """One page of several listings as a monospace table: number, dates,
     days, place — in the given order (nearest dates first). More dates of the
-    same listing get lines of their own, without a number. The header
-    defaults to that of an alert ("N new sits · Subscription #…"); under the
-    table, the names of the sites (`sites`: key → name) behind the letters
-    of its buttons ("1(T)", see browse.list_message)."""
+    same listing get lines of their own, without a number — fewer of them if
+    a full page would be over a message. The header defaults to that of an
+    alert ("N new sits · Subscription #…"); under the table, the names of the
+    sites (`sites`: key → name) behind the letters of its buttons ("1(T)",
+    see browse.list_message)."""
     if header is None:
         sub_ids = sorted({i for _, _, subs in items for i in subs})
         header = f"🔔 <b>{len(items)} new sits</b> · {subscriptions_label(sub_ids)}"
-    rows = [f"{'#':>2} {'Dates':<11} {'D':>3} Where"]  # D: days, up to 3 digits
     first = page * PAGE_SIZE
     shown = items[first : first + PAGE_SIZE]
-    for n, (listing, slots, _) in enumerate(shown, start=first + 1):
-        rows.append(_row(str(n), slots[0], f"{country_tag(listing.country_code)} {escape(city(listing))}"))
-        rows += [_row("", s) for s in slots[1 : 1 + MORE_DATES]]
-        if len(slots) > 1 + MORE_DATES:
-            rows.append(f"{'':>2} + {len(slots) - 1 - MORE_DATES} more")
     on_page = {l.source for l, _, _ in shown}
     legend = " · ".join(
         f"({site_tag(key, sites)}) {escape(sites.get(key, key))}"
         for key in [*sites, *sorted(on_page - set(sites))]
         if key in on_page
     )
-    return "\n".join(
-        [
-            header,
-            "<pre>" + "\n".join(rows) + "</pre>",
-            f"🌐 {legend}",
-            "👇 Tap a number to open it on the site",
-        ]
-    )
+
+    def build(more: int) -> str:
+        rows = [f"{'#':>2} {'Dates':<11} {'D':>3} Where"]  # D: days, up to 3 digits
+        for n, (listing, slots, _) in enumerate(shown, start=first + 1):
+            rows.append(_row(str(n), slots[0], f"{country_tag(listing.country_code)} {escape(city(listing))}"))
+            rows += [_row("", s) for s in slots[1 : 1 + more]]
+            if len(slots) > 1 + more:
+                rows.append(f"{'':>2} + {len(slots) - 1 - more} more")
+        return "\n".join(
+            [
+                header,
+                "<pre>" + "\n".join(rows) + "</pre>",
+                f"🌐 {legend}",
+                "👇 Tap a number to open it on the site",
+            ]
+        )
+
+    # 50 rows of ≤ 37 characters and their "+ N more" lines fit with no extra dates.
+    more = MORE_DATES
+    text = build(more)
+    while tg_len(text) > TEXT_LIMIT and more:
+        more -= 1
+        text = build(more)
+    return text
 
 
 def describe_filter(flt: Filter) -> str:

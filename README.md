@@ -23,8 +23,8 @@ needed for any:
   any sit or date range not on the site when you subscribed counts as new
   (on MindMyHouse, edited dates too).
 - One new sit arrives as a card with a photo; several at once as one table
-  (site, dates, days, place; nearest dates first), where a number opens the
-  listing on its site and ◀ ▶ flip the pages. The number buttons say the site
+  (dates, days, place; nearest dates first; 50 a page), where a number opens
+  the listing on its site and ◀ ▶ flip the pages. The number buttons say the site
   too, `1(T)`, `2(N)`, and the line under the table names them.
 - `/search` for what is open now, by start date — see [Search](#search).
 - Multiple users, each with their own subscriptions (`/new`, `/list`) and sites (`/sites`).

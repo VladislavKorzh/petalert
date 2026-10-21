@@ -24,6 +24,7 @@ from aiogram.types import CallbackQuery, Chat, InaccessibleMessage, Message, Upd
 from petalert.bot import build_dispatcher
 from petalert.bot.browse import Browse, Item, pack
 from petalert.bot.dialog import ALL_OFF, Pick
+from petalert.bot.format import PAGE_SIZE
 from petalert.bot.manage import SiteToggle, SubAction
 from petalert.bot.search import BUSY, SEARCH_HELP
 from petalert.db import Store
@@ -334,11 +335,11 @@ def edits(calls) -> list[EditMessageText]:
 
 
 def test_table_numbers_open_the_sits_on_their_site(h):
-    list_id = table(h, 13)
+    list_id = table(h, PAGE_SIZE + 3)
     (page2,) = edits(h.press(Browse(list_id=list_id, view="page", n=1)))
     numbers = page2.reply_markup.inline_keyboard[0]
     assert [(b.text, b.url, b.callback_data) for b in numbers] == [
-        ("11(T)", "https://x/l/10/", None), ("12(T)", "https://x/l/11/", None), ("13(T)", "https://x/l/12/", None)
+        ("51(T)", "https://x/l/50/", None), ("52(T)", "https://x/l/51/", None), ("53(T)", "https://x/l/52/", None)
     ]
 
 
@@ -364,13 +365,17 @@ def test_card_buttons_of_older_tables_still_open_the_card_in_place(h):
 
 
 def test_table_pages(h):
-    list_id = table(h, 13)
+    list_id = table(h, PAGE_SIZE + 3)
+    (page1,) = edits(h.press(Browse(list_id=list_id, view="page", n=0)))
+    rows = page1.reply_markup.inline_keyboard
+    assert [len(row) for row in rows] == [5] * 10 + [3]  # 50 numbers, 5 a row, then ◀ 1/2 ▶
+    assert page1.text.count("Town") == PAGE_SIZE
     (page2,) = edits(h.press(Browse(list_id=list_id, view="page", n=1)))
     rows = page2.reply_markup.inline_keyboard
-    assert [b.text for b in rows[0]] == ["11(T)", "12(T)", "13(T)"]
+    assert [b.text for b in rows[0]] == ["51(T)", "52(T)", "53(T)"]
     assert [b.text for b in rows[-1]] == ["◀", "2/2", "▶"]
-    # Back from card 12 (an older table's button) lands on page 2
-    (card,) = edits(h.press(Browse(list_id=list_id, view="card", n=11)))
+    # Back from card 52 (an older table's button) lands on page 2
+    (card,) = edits(h.press(Browse(list_id=list_id, view="card", n=51)))
     assert Browse.unpack(card.reply_markup.inline_keyboard[1][0].callback_data).n == 1
     # the page counter button does nothing
     calls = h.press(Browse(list_id=list_id, view="noop"))
