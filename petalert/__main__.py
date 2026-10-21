@@ -26,9 +26,11 @@ from .bot import build_dispatcher
 from .bot.notify import TelegramOutbox
 from .config import Settings
 from .db import Store, format_code
+from .geocode import Geocoder
 from .http import Http
+from .models import distance_km
 from .scheduler import Worker
-from .search import parse, run
+from .search import locate, parse, run
 from .sources import REGISTRY, build_sources
 
 log = logging.getLogger("petalert")
@@ -59,7 +61,7 @@ async def run_bot(settings: Settings) -> None:
         store, sources, outbox, admin, settings.poll_interval, full_every=settings.full_crawl_every
     )
 
-    dp = build_dispatcher(store, sources, worker, settings.admin_user_ids)
+    dp = build_dispatcher(store, sources, worker, settings.admin_user_ids, Geocoder(http))
 
     await bot.set_my_commands(COMMANDS)
     me = await bot.get_me()
@@ -107,11 +109,15 @@ def search(settings: Settings, text: str) -> None:
     async def go():
         http = Http(settings.proxy_url, settings.proxy_mode)
         try:
-            return await run(query, list(build_sources(http, settings).values()))
+            located = await locate(query, Geocoder(http))
+            return located, await run(located, list(build_sources(http, settings).values()))
         finally:
             await http.aclose()
 
-    found = asyncio.run(go())
+    try:
+        query, found = asyncio.run(go())
+    except ValueError as exc:  # no such town
+        sys.exit(str(exc))
     where, when = describe(query)
     n = len(found.items)
     print(f"{n} open sit{'' if n == 1 else 's'} · start {when} · {where}" + (" · more exist" if found.more else ""))
@@ -119,7 +125,10 @@ def search(settings: Settings, text: str) -> None:
         print(f"! {problem}")
     for listing, slots in found.items:
         dates = ", ".join(f"{s.start:%d.%m.%Y}–{s.end:%d.%m.%Y} ({s.days} d)" for s in slots)
-        print(f"{dates}  {(listing.country_code or '--').upper()} {city(listing)}  [{listing.source}] {listing.url}")
+        away = ""
+        if query.near and listing.lat is not None and listing.lon is not None:
+            away = f" {distance_km(query.near.lat, query.near.lon, listing.lat, listing.lon):.0f} km"
+        print(f"{dates}  {(listing.country_code or '--').upper()} {city(listing)}{away}  [{listing.source}] {listing.url}")
 
 
 async def _bot_username(token: str) -> str:

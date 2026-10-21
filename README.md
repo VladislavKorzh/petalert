@@ -26,7 +26,8 @@ needed for any:
   (dates, days, place; nearest dates first; 50 a page), where a number opens
   the listing on its site and ◀ ▶ flip the pages. The number buttons say the site
   too, `1(T)`, `2(N)`, and the line under the table names them.
-- `/search` for what is open now, by start date — see [Search](#search).
+- `/search` for what is open now, by start date, in a place or around a town
+  (`malaga 100km`) — see [Search](#search).
 - Multiple users, each with their own subscriptions (`/new`, `/list`) and sites (`/sites`).
 - Access via single-use invite codes.
 - Filters: continent, country (or "all except…"), a date window (the sit must
@@ -62,6 +63,7 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 | `petalert/models.py` | `Filter`, `Listing`, `Slot`, local filtering (authoritative; the API filter is only an optimization) |
 | `petalert/search.py` | `/search`: the query, reading the sites by start date (`Source.by_start`) |
 | `petalert/geo.py` | ISO country codes → names and continents (as THS groups them) |
+| `petalert/geocode.py` | towns → coordinates for `/search` around a town (OpenStreetMap's Nominatim), cached |
 | `petalert/sources/ths.py` | THS query and parsing, `api-version` self-healing on 406 |
 | `petalert/sources/mmh.py` | MindMyHouse page parsing, its country → continent table |
 | `petalert/sources/nmd.py` | Nomador: the map, the result pages crawled by stay length, stay pages; an index of the site kept between crawls |
@@ -117,6 +119,8 @@ opens the sit on its site:
 | `pt, es, 1.12 - 20.12` | in Portugal or Spain, 1 – 20 Dec (no year: the next one) |
 | `north america 2026-12-01` | in North America on 1 Dec |
 | `eu, 1.12 - 20.12, min 14` | in Europe, 1 – 20 Dec, 14 days or longer |
+| `malaga 100km +60 30.10.2026` | within 100 km of Málaga, 30 Oct – 29 Dec |
+| `valencia es 50km 1.12 -` | within 50 km of Valencia, the one in Spain, from 1 Dec on |
 
 - Places: `eu`/`europe`, `asia`, `africa`, `oceania`, `north america`,
   `south america`; countries by ISO code (`pt`, `uk` = `gb`) or name;
@@ -128,6 +132,12 @@ opens the sit on its site:
 - `min N` (`min 14`, `min 14 days`) keeps sits of at least N days, counted as
   the sites count them (end − start). THS gets it in the query and then sorts
   by the first slot that long, so a long minimum reads fewer pages.
+- `N km` (`100km`, `+100km`, up to 500) makes the place a town: the sits
+  within that distance of it, whatever the country (Málaga + 150 km has
+  Gibraltar). The town's country, after it (`malaga es`, `valencia, spain`),
+  only says which town of that name; `-xx` still leaves a country out. The
+  reply names the town it found ("Within 100 km of Málaga, Spain"), so a wrong
+  one shows.
 - At most 100 sits, nearest start first; the reply says when there are more.
 
 THS has a "Start date" sort (`SIT_START_DATE`, found in the site's JS), so a
@@ -137,6 +147,14 @@ through the proxy), not a crawl. Plain page numbers reach 1000 listings; a
 search that needs more says so. If THS ever stops honouring the sort, the
 search reports THS as failed and the admin hears about it. MindMyHouse and
 Nomador answer from what they have cached (Nomador: its index of the site).
+
+Around a town, the town is looked up first on OpenStreetMap
+([Nominatim](https://nominatim.org/release-docs/latest/api/Search/)'s public
+server: free with an identifying User-Agent, at most a request a second, and
+each town is cached for the life of the process). Every site gives each
+listing's coordinates: THS takes the circle in its query (`geoPoint`, from the
+site's JS, the same listings as our own distance check), MindMyHouse and
+Nomador are filtered here by distance (haversine).
 
 ## Invite codes
 
@@ -265,6 +283,12 @@ Each tick logs `groups`, `full`, `listings`, `fresh`, `sent`, `failed`,
 - **Nomador HTTP 403 "blocked by a Cloudflare challenge"** means Chrome's
   handshake no longer passes either: update curl_cffi
   (`uv lock --upgrade-package curl-cffi`) and run `test_live_nmd.py`.
+- **Coordinates are the sites'.** THS gives the town's centre (its places
+  are GeoNames'), Nomador and MindMyHouse the point of their map marker,
+  which on MindMyHouse is sometimes only the area's main town (a sit in
+  Lagos has its marker in Faro, ~65 km off): the edge of a circle is
+  approximate. A site whose coordinates vanish is reported to the admin; its
+  sits then miss every search around a town.
 - **Database backups** are not part of this repo. A consistent copy, safe while
   the bot runs (put it in a daily timer, or enable server snapshots):
   `sudo -u petalert /srv/petalert/.venv/bin/python -c "import sqlite3; sqlite3.connect('/var/lib/petalert/petalert.sqlite3').backup(sqlite3.connect('/var/lib/petalert/backup.sqlite3'))"`

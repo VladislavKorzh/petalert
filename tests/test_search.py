@@ -9,8 +9,9 @@ from datetime import date, timedelta
 import pytest
 
 from petalert import geo
-from petalert.models import CONTINENTS, Filter, Listing, Slot
-from petalert.search import MAX_RESULTS, Search, has_date, parse, run
+from petalert.geocode import Town
+from petalert.models import CONTINENTS, Circle, Filter, Listing, Slot
+from petalert.search import MAX_RESULTS, Around, Search, has_date, locate, parse, run
 from petalert.sources.base import SourceError, TooBroad
 from petalert.sources.mmh import COUNTRIES as MMH_COUNTRIES
 
@@ -155,6 +156,52 @@ def test_a_minimum_length_leaves_places_and_margins_alone():
     )
 
 
+@pytest.mark.parametrize(
+    "text, town, country, km",
+    [
+        ("malaga 100km +60 30.10.2026", "malaga", None, 100),
+        ("Malaga, ES 100 km 30.10.2026", "Malaga", "es", 100),
+        ("malaga es +100km 30.10.2026", "malaga", "es", 100),  # "+100km" is no margin
+        ("valencia spain 50 kilometres 1.12", "valencia", "es", 50),
+        ("30.11.2026 - 20km san sebastian, spain", "san sebastian", "es", 20),
+        ("la linea de la concepcion 20km 30.11", "la linea de la concepcion", None, 20),  # not Laos or Germany
+        ("san marino 20km 30.11", "san marino", None, 20),  # only a country: it is the town
+        ("port of spain, tt 30km 30.11", "port of spain", "tt", 30),
+        ("r(Malaga,ES+100km) +60 30.10.2026", "Malaga", "es", 100),  # as first asked for
+    ],
+)
+def test_a_radius_makes_the_place_a_town(text, town, country, km):
+    s = parse(text, TODAY)
+    assert s.around == Around(town, km, country)
+    assert (s.continents, s.countries, s.centre) == ((), (), None)
+
+
+def test_a_radius_keeps_dates_lengths_and_exclusions():
+    s = parse("malaga 100km +60 30.10.2026 -gi min 7", TODAY)
+    assert (s.start_from, s.start_to, s.exclude, s.min_days) == (d(30, 10), d(29, 12), ("gi",), 7)
+    assert s.around == Around("malaga", 100)
+
+
+@pytest.mark.parametrize(
+    "text, error",
+    [
+        ("100km 30.11.2026", "needs a town"),
+        ("-uk 100km 30.11.2026", "needs a town"),
+        ("malaga 0km 30.11.2026", "1 to 500 km"),
+        ("malaga 501km 30.11.2026", "1 to 500 km"),
+        ("malaga 10km 20km 30.11.2026", "One radius"),
+        ("malaga -eu 100km 30.11.2026", "Only countries can be left out"),
+        ("malaga -narnia 100km 30.11.2026", "Unknown country 'narnia'"),
+        ("malaga 100km 30.11.26", "Can't read '30.11.26'"),
+        ("malaga - 100km 30.11.2026", "lone '-'"),
+        ("malaga 30.11.2026", "or a town with a radius, like malaga 100km"),
+    ],
+)
+def test_radius_errors_are_for_the_user(text, error):
+    with pytest.raises(ValueError, match=error):
+        parse(text, TODAY)
+
+
 def test_plain_text_counts_as_a_search_only_with_a_date():
     assert has_date("eu(-uk) ±3 30.11.2026") and has_date("pt 30.11")
     assert not has_date("hello") and not has_date("pt es")
@@ -179,6 +226,56 @@ def test_matching_goes_by_country_code_and_exclusions_win():
     assert s.matches(listing("3", "us", d(30, 11), continent="north-america"))
     assert not s.matches(listing("4", "ca", d(30, 11), continent="north-america"))
     assert s.matches(listing("5", None, d(30, 11), source="mmh"))  # a region: only its continent finds it
+
+
+MALAGA = Town("Málaga", "es", 36.7648, -4.4422)
+
+
+def located(text: str) -> Search:
+    return replace(parse(text, TODAY), centre=MALAGA)
+
+
+def at(lid: str, code: str | None, lat: float | None, lon: float | None, **kw) -> Listing:
+    return replace(listing(lid, code, d(1, 12), **kw), lat=lat, lon=lon)
+
+
+def test_around_a_town_matching_goes_by_distance_across_borders():
+    s = located("malaga 150km 30.11.2026 -")
+    assert s.matches(at("1", "es", 36.5101, -4.8825))  # Marbella, 48 km
+    assert s.matches(at("2", "gi", 36.1408, -5.3536))  # Gibraltar, 107 km: another country
+    assert not s.matches(at("3", "es", 37.3891, -5.9845))  # Seville, 153 km
+    assert not s.matches(at("4", "es", None, None))  # a site that doesn't say where
+    assert not located("malaga 150km -gi 30.11.2026").matches(at("2", "gi", 36.1408, -5.3536))
+
+
+def test_around_a_town_the_sites_are_asked_for_the_circle():
+    assert located("malaga 100km 30.11.2026 min 7").scopes() == [
+        Filter("", date_from=d(30, 11), min_days=7, near=Circle(36.7648, -4.4422, 100))
+    ]
+
+
+class Towns:
+    """A geocoder that knows some towns and counts the lookups."""
+
+    def __init__(self, **towns: Town):
+        self.towns = towns
+        self.asked: list[tuple[str, str | None]] = []
+
+    async def town(self, query, country=None):
+        self.asked.append((query, country))
+        return self.towns.get(query)
+
+
+def test_locate_finds_the_town_once_and_leaves_other_searches_alone():
+    towns = Towns(malaga=MALAGA)
+    s = asyncio.run(locate(parse("malaga es 100km 30.11.2026", TODAY), towns))
+    assert s.centre == MALAGA and s.near == Circle(36.7648, -4.4422, 100)
+    assert asyncio.run(locate(s, towns)) is s
+    plain = parse("pt 30.11.2026", TODAY)
+    assert asyncio.run(locate(plain, towns)) is plain
+    assert towns.asked == [("malaga", "es")]
+    with pytest.raises(ValueError, match="Can't find 'malagaa' in Spain on the map"):
+        asyncio.run(locate(parse("malagaa es 100km 30.11.2026", TODAY), towns))
 
 
 def test_slots_are_the_open_ones_starting_in_range():
@@ -291,6 +388,14 @@ def test_sites_merge_by_start_and_a_listing_counts_once():
     found = go(parse("pt, es ±3 30.11.2026", TODAY), ths, mmh)
     assert [(l.source, l.id) for l, _ in found.items] == [("ths", "1"), ("mmh", "9"), ("ths", "2")]
     assert len(ths.scopes) == 2  # a request per country
+
+
+def test_around_a_town_every_site_reads_the_circle_and_keeps_whats_in_it():
+    ths = Site("ths", [[at("1", "es", 36.72, -4.42), at("2", "es", 40.4168, -3.7038)]])  # Madrid, 411 km
+    mmh = Site("mmh", [[at("9", "gi", 36.1408, -5.3536, source="mmh")]])
+    found = go(located("malaga 150km 30.11.2026 -"), ths, mmh)
+    assert {l.id for l, _ in found.items} == {"1", "9"}
+    assert ths.scopes == mmh.scopes == [Filter("", date_from=d(30, 11), near=Circle(36.7648, -4.4422, 150))]
 
 
 def test_a_failing_site_leaves_the_others_and_says_so():

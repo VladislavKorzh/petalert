@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from petalert.http import Http
-from petalert.models import Filter, first_open_start
+from petalert.models import Circle, Filter, first_open_start
 from petalert.sources import nmd
 from petalert.sources.base import SourceError
 from petalert.sources.nmd import (
@@ -66,6 +66,7 @@ def test_fields():
     assert stay.photo_url.startswith("https://media.nomador.com/") and stay.photo_url.endswith(".jpg")
     assert stay.pets == (("dog", 2),)
     assert stay.published is None
+    assert (stay.lat, stay.lon) == (37.2864406, -5.9240958)
     (slot,) = stay.slots
     assert (slot.id, slot.start, slot.end, slot.days, slot.is_open, slot.seq) == (
         DOS_HERMANAS, date(2026, 12, 18), date(2027, 1, 3), 16, True, None
@@ -381,9 +382,13 @@ def test_the_real_page_answers_filters_countries_and_searches_by_start():
         europe = await fake.nmd.countries("europe")
         caribbean = await fake.nmd.countries("north-america")
         (page,) = [p async for p in fake.nmd.by_start(Filter("europe", country="spain", date_from=date(2026, 11, 1)))]
-        return horses, europe, caribbean, page
+        lyon = Circle(45.764, 4.8357, 60)
+        (near,) = [p async for p in fake.nmd.by_start(Filter("", near=lyon, date_from=date(2026, 11, 1)))]
+        return horses, europe, caribbean, page, near
 
-    horses, europe, caribbean, page = fake.run(go)
+    horses, europe, caribbean, page, near = fake.run(go)
+    # (Chabanière, 26 km from Lyon too, is the stay without dates; Meudon is 392 km away)
+    assert [l.place.split(",")[0] for l in near] == ["Val d'Oingt"]
     assert [l.place for l in horses] == ["Val d'Oingt, Auvergne-Rhône-Alpes, France"]
     assert [(c.slug, c.name, c.count) for c in europe] == [
         ("france", "France", 2), ("malta", "Malta", 1), ("netherlands", "Netherlands", 1), ("spain", "Spain", 1)

@@ -5,6 +5,7 @@
     eu(-uk), ±3, 30.11.2026 -    starting 27 Nov or later
     pt, es, 1.12 - 20.12         Portugal or Spain, starting in that range
     eu, 1.12 - 20.12, min 14     the same in Europe, sits of 14 days or more
+    malaga 100km +60 30.10.2026  within 100 km of Málaga, starting 30 Oct – 29 Dec
 
 Dates are a range of START dates (±N widens it on both sides, +N only after,
 -N only before); how long a sit lasts doesn't matter unless `min N` asks for
@@ -12,6 +13,11 @@ at least N days (as the sites count: end − start). The range begins tomorrow
 at the earliest: a sit starting today is too late to apply for (and THS
 doesn't keep today's starts in its start-date order). Places are matched on the listing's ISO country code,
 which both sites give (`geo` knows each code's continent).
+
+A radius (`100km`) makes the place a town instead: `malaga`, or `malaga es`
+(`valencia, spain`) when the country has to say which. `locate` finds it on
+the map (geocode.py), and a listing matches by its coordinates, wherever the
+border is: THS takes the circle in its query, the others are filtered here.
 
 Sites are read nearest start first (`Source.by_start`) and only until the
 range is over or there are enough results, so a search is usually a request
@@ -27,11 +33,12 @@ import logging
 import re
 from collections.abc import Sequence
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from . import geo
-from .models import CONTINENTS, Filter, Listing, Slot, first_open_start
+from .geocode import Geocoder, Town
+from .models import CONTINENTS, Circle, Filter, Listing, Slot, first_open_start
 from .sources.base import Source, TooBroad
 
 log = logging.getLogger(__name__)
@@ -39,6 +46,7 @@ log = logging.getLogger(__name__)
 MAX_RESULTS = 100  # listings in one result: 2 pages of the table, nearest first
 MAX_FLEX = 180  # days, on either side
 MAX_DAYS = 365  # a minimum length, as in /new
+MAX_KM = 500  # a radius; further is a country's or a continent's search
 
 # ±3 / +-3 / +/-3 (both sides), +5 (after), -2 (before). A minus right before
 # the number only, not inside a date (2026-11-30) or a range (1.12 -20.12).
@@ -51,6 +59,9 @@ _FLEX = re.compile(
 _MIN_DAYS = re.compile(
     r"(?<![\w-])min\.?\s*[:=]?\s*(?P<days>\d{1,3})(?![\d.])(?:\s*(?:d|days?|nights?)\b)?", re.IGNORECASE
 )
+# 100km / 100 km / +100km: around a town. Read before the margins, which "+100" would be.
+_RADIUS = re.compile(r"(?:\+\s*|(?<![\w.]))(?P<km>\d{1,4})\s*(?:km|kilomet(?:er|re)s?)\b", re.IGNORECASE)
+_R_GROUP = re.compile(r"(?<![\w.])r(?=\s*\()", re.IGNORECASE)  # the "r" of r(malaga, es +100km)
 # 2026-11-30, 30.11.2026, 30/11/2026, 30.11 or 30.11. (no year: see _resolve)
 _DATE = re.compile(
     r"(?<![\d.])(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?)(?!\d)(?!\.\d)\.?"
@@ -58,12 +69,28 @@ _DATE = re.compile(
 _RANGE = re.compile(r"\s*(?:[-–—]|to|till|until)?\s*", re.IGNORECASE)  # between two dates
 _OPEN_END = re.compile(r"[\s,]*[-–—](?![a-z])", re.IGNORECASE)  # "30.11.2026 -", but not "30.11.2026 -uk"
 _DASHES = "-–—"
-HELP_FORMAT = "Dates look like 30.11.2026, a margin like ±3, +5 or -2, a minimum length like min 14."
+HELP_FORMAT = (
+    "Dates look like 30.11.2026, a margin like ±3, +5 or -2, a minimum length like min 14, a radius like 100km."
+)
 LONE_DASH = (
     "Can't read a lone '-'. A range of starts is 1.12.2026 - 20.12.2026, \"from then on\" is "
     "30.11.2026 -, and -uk leaves a country out."
 )
 YEARS_AHEAD = 3
+
+
+@dataclass(frozen=True)
+class Around:
+    """`malaga es 100km`: within `km` of a town. The country only says which
+    town of that name: the circle crosses borders."""
+
+    town: str  # as written
+    km: int
+    country: str | None = None  # ISO code, lower case
+
+    @property
+    def label(self) -> str:
+        return f"{self.town}, {geo.name(self.country)}" if self.country else self.town
 
 
 @dataclass(frozen=True)
@@ -74,11 +101,22 @@ class Search:
     countries: tuple[str, ...] = ()  # ISO codes, lower case
     exclude: tuple[str, ...] = ()  # ISO codes; wins over the above
     min_days: int | None = None  # a slot at least this long (Slot.days)
+    around: Around | None = None  # instead of continents and countries
+    centre: Town | None = None  # where the town is: `locate` finds it
+
+    @property
+    def near(self) -> Circle | None:
+        if self.around is None or self.centre is None:
+            return None
+        return Circle(self.centre.lat, self.centre.lon, self.around.km)
 
     def matches(self, listing: Listing) -> bool:
         code = listing.country_code
         if code in self.exclude:
             return False
+        if self.around:
+            assert self.near is not None, "locate() the town first"
+            return self.near.contains(listing)
         # (MindMyHouse regions such as "Caribbean" have no code: only a continent finds them)
         return listing.continent in self.continents or (code is not None and code in self.countries)
 
@@ -95,8 +133,12 @@ class Search:
         )
 
     def scopes(self) -> list[Filter]:
-        """What to ask the sites: each continent, and each country outside them."""
+        """What to ask the sites: each continent, and each country outside
+        them — or the circle around the town."""
         when = {"date_from": self.start_from, "min_days": self.min_days}
+        if self.around:
+            assert self.near is not None, "locate() the town first"
+            return [Filter("", near=self.near, **when)]
         scopes = [Filter(c, **when) for c in self.continents]
         for code in self.countries:
             if geo.continent(code) not in self.continents:
@@ -186,6 +228,60 @@ def _dates(text: str, today: date, after: timedelta) -> tuple[date | None, date 
     return first, last, spans
 
 
+def _exclusion(words: list[str], i: int) -> tuple[str, int]:
+    """The country left out by `-uk` (or `-united kingdom`) at words[i], and
+    the index after it."""
+    for j in range(len(words), i, -1):
+        found = geo.lookup_place(" ".join(words[i:j]).lstrip(_DASHES))
+        if found and found[0] == "country":
+            return found[1], j
+    name = words[i].lstrip(_DASHES)
+    if geo.lookup_place(name):
+        raise ValueError(f"Only countries can be left out, not {name!r}.")
+    raise ValueError(f"Unknown country {name!r} to leave out. Use its code (-uk) or name.")
+
+
+def _town(text: str) -> tuple[str, str | None, list[str]]:
+    """The town of a search with a radius, the country that says which (the
+    last words or the part after the last comma, if they are one) and the
+    countries left out. Only the end is looked at for a country, as a town's
+    words can be codes too: "La Línea de la Concepción" holds Laos and Germany."""
+    parts: list[list[str]] = []
+    exclude: list[str] = []
+    for part in re.split(r"[,;()\[\]]", text):
+        words = part.split()
+        if any(not w.strip(_DASHES) for w in words):
+            raise ValueError(LONE_DASH)
+        kept: list[str] = []
+        i = 0
+        while i < len(words):
+            if words[i][0] in _DASHES:
+                code, i = _exclusion(words, i)
+                if code not in exclude:
+                    exclude.append(code)
+                continue
+            if any(ch.isdigit() for ch in words[i]):
+                raise ValueError(f"Can't read {words[i]!r}. {HELP_FORMAT}")
+            kept.append(words[i])
+            i += 1
+        if kept:
+            parts.append(kept)
+    if not parts:
+        raise ValueError("A radius needs a town to be around, like malaga 100km.")
+    country = None
+    last = parts[-1]
+    most = len(last) if len(parts) > 1 else len(last) - 1  # a town has to be left
+    # The longest run of last words that is a country.
+    for k in range(most, 0, -1):
+        found = geo.lookup_place(" ".join(last[-k:]))
+        if found and found[0] == "country":
+            country = found[1]
+            parts[-1] = last[:-k]
+            break
+    town = ", ".join(" ".join(words) for words in parts if words)
+    return town, country, exclude
+
+
 def _places(text: str) -> tuple[list[str], list[str], list[str]]:
     continents: list[str] = []
     countries: list[str] = []
@@ -221,14 +317,22 @@ def _places(text: str) -> tuple[list[str], list[str], list[str]]:
                 raise ValueError(f"Can't read {word!r}. {HELP_FORMAT}")
             raise ValueError(
                 f"Unknown place {word!r}. Use a continent (eu, asia, africa, oceania, north america, "
-                "south america), a country code (pt, uk) or a country name."
+                "south america), a country code (pt, uk) or a country name — or a town with a radius, "
+                "like malaga 100km."
             )
     return continents, countries, exclude
 
 
 def parse(text: str, today: date) -> Search:
-    """A query like `eu(-uk), ±3, 30.11.2026 -, min 14`. The ValueError
-    message is meant for the user."""
+    """A query like `eu(-uk), ±3, 30.11.2026 -, min 14` or `malaga 100km
+    30.11.2026` (then `locate` it). The ValueError message is meant for the user."""
+    radii = list(_RADIUS.finditer(text))
+    if len(radii) > 1:
+        raise ValueError("One radius, like 100km.")
+    km = int(radii[0]["km"]) if radii else None
+    if km is not None and not 1 <= km <= MAX_KM:
+        raise ValueError(f"A radius is 1 to {MAX_KM} km.")
+    text = _blank(text, [m.span() for m in radii + (list(_R_GROUP.finditer(text)) if radii else [])])
     lengths = list(_MIN_DAYS.finditer(text))
     if len(lengths) > 1:
         raise ValueError("One minimum length, like min 14.")
@@ -252,9 +356,14 @@ def parse(text: str, today: date) -> Search:
     start_to = last + after if last else None
     if start_to is not None and start_to < earliest:
         raise ValueError("These start dates have passed (a search starts from tomorrow).")
-    continents, countries, exclude = _places(_blank(text, spans))
-    if not continents and not countries:
-        continents = list(CONTINENTS)  # anywhere
+    around = None
+    if km is not None:
+        town, country, exclude = _town(_blank(text, spans))
+        continents, countries, around = [], [], Around(town, km, country)
+    else:
+        continents, countries, exclude = _places(_blank(text, spans))
+        if not continents and not countries:
+            continents = list(CONTINENTS)  # anywhere
     return Search(
         start_from=max(first - before, earliest) if first else earliest,
         start_to=start_to,
@@ -262,7 +371,24 @@ def parse(text: str, today: date) -> Search:
         countries=tuple(countries),
         exclude=tuple(exclude),
         min_days=min_days,
+        around=around,
     )
+
+
+async def locate(search: Search, geocoder: Geocoder) -> Search:
+    """The search with its town found on the map (a search without one as it
+    is). A ValueError for the user if there is no such town; GeocodeError if
+    the lookup failed."""
+    if search.around is None or search.centre is not None:
+        return search
+    town = await geocoder.town(search.around.town, search.around.country)
+    if town is None:
+        where = f" in {geo.name(search.around.country)}" if search.around.country else ""
+        raise ValueError(
+            f"Can't find {search.around.town!r}{where} on the map. Check the spelling, or add its country, "
+            "like malaga es 100km."
+        )
+    return replace(search, centre=town)
 
 
 @dataclass

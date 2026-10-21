@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from petalert.http import Http
-from petalert.models import PETS, Filter, first_open_start
+from petalert.models import PETS, Circle, Filter, distance_km, first_open_start
 from petalert.sources.base import SourceError
 from petalert.sources.mmh import (
     CACHE_SECONDS,
@@ -40,6 +40,7 @@ def test_every_marker_parses():
     assert all(l.continent and l.slots for l in listings)
     assert all(name in PETS or name == "other animal" for l in listings for name, _ in l.pets)
     assert all(count is None for l in listings for _, count in l.pets)
+    assert all(l.lat is not None and l.lon is not None for l in listings)
 
 
 def test_fields():
@@ -53,6 +54,7 @@ def test_fields():
         "https://www.mindmyhouse.com/assets/owners_photos/large/bee4a3576ee365a725cd03efb4d381b8.jpg"
     )
     assert condo.pets == (("dog", None),)
+    assert (condo.lat, condo.lon) == (37.0164626, -7.9351983)  # the marker: Faro, not Lagos (the site's)
     (slot,) = condo.slots
     assert (slot.id, slot.start, slot.end, slot.days, slot.is_open) == (
         "32697-20261219-20261231", date(2026, 12, 19), date(2026, 12, 31), 12, True
@@ -265,6 +267,25 @@ def test_by_start_with_a_minimum_length_orders_by_the_first_long_slot():
     keys = [first_open_start(l, since, 21) for l in page]
     assert page and keys == sorted(keys) and None not in keys
     assert len(page) < len(everything)  # some only have shorter sits
+
+
+def test_by_start_in_a_circle_crosses_continents_and_borders():
+    fake = Fake()
+    faro = Circle(37.0164626, -7.9351983, 300)
+
+    async def go():
+        return [page async for page in fake.mmh.by_start(Filter("", near=faro, date_from=date(2026, 11, 1)))]
+
+    (page,) = fake.run(go)
+    assert {l.id for l in page} <= {"32697", "52233", "12437", "10759"}  # the fixture's sits within 300 km
+    assert {l.country_code for l in page} == {"pt", "es"}
+    assert all(distance_km(faro.lat, faro.lon, l.lat, l.lon) <= 300 for l in page)
+
+
+def test_a_map_without_coordinates_is_told():
+    fake = Fake(lambda request: httpx.Response(200, text=PAGE.replace("L.LatLng(", "L.latLng(")))
+    assert fake.run(lambda: fake.mmh.search(Filter("europe"), max_pages=1))  # still parses
+    assert any("no marker has coordinates" in n for n in fake.notices)
 
 
 def test_goes_direct_even_when_the_proxy_is_always_on():

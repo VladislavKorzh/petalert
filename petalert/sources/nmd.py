@@ -56,7 +56,7 @@ import httpx
 
 from .. import geo
 from ..http import Http
-from ..models import Country, Filter, Listing, Slot, first_open_start, listing_matches, matching_slots
+from ..models import Country, Filter, Listing, Slot, first_open_start, in_area, listing_matches, matching_slots
 from .base import Notice, SourceError
 
 log = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 # A card starts with its div: `<div class="c-housing … [occupied]" data-lat=…`.
 _CARD = re.compile(r'<div\s+class="(c-housing\b[^"]*)"\s+data-lat=')
-_ATTR = re.compile(r'\bdata-(stayid|title|dates|link|picture)="([^"]*)"')
+_ATTR = re.compile(r'\bdata-(stayid|title|dates|link|picture|lat|lng)="([^"]*)"')
 _LOCATION = re.compile(r'<p class="c-housing__description">(.*?)</p>', re.S)
 _AVAILABILITY = re.compile(r'<div class="c-housing__availability">(.*?)</div>', re.S)
 _SPEC = re.compile(r'<p class="c-housing__spec">(.*?)</p>', re.S)
@@ -139,6 +139,13 @@ def parse_dates(text: str) -> tuple[date, date] | None:
     else:
         year = end.year if (month, int(d1)) <= (end.month, end.day) else end.year - 1
     return date(year, month, int(d1)), end
+
+
+def _coordinate(value: str | None) -> float | None:
+    try:
+        return float(value) if value else None
+    except ValueError:
+        return None
 
 
 def parse_card(classes: str, card: str) -> Listing:
@@ -189,6 +196,8 @@ def parse_card(classes: str, card: str) -> Listing:
         pets=tuple(pets.items()),
         slots=slots,
         country_code=code,
+        lat=_coordinate(attrs.get("lat")),
+        lon=_coordinate(attrs.get("lng")),
     )
 
 
@@ -399,6 +408,11 @@ class Nomador:
             await self._tell_once(f"pet:{name}", f"Nomador: unknown animal {name!r} — map it in PETS in sources/nmd.py.")
         if len(listings) >= 20 and not any(l.pets for l in listings):
             await self._tell_once("pets", "Nomador: no stay has pets — the pets markup changed?")
+        if len(listings) >= 20 and not any(l.lat is not None for l in listings):
+            await self._tell_once(
+                "points", "Nomador: no stay card has coordinates — the cards changed? /search around a town "
+                "finds nothing here until fixed.",
+            )
 
     async def search(self, flt: Filter, *, max_pages: int | None) -> list[Listing]:
         """Answered from the index of the whole site, so `max_pages` doesn't
@@ -407,14 +421,13 @@ class Nomador:
         return [l for l in await self._all() if listing_matches(l, flt) and matching_slots(l, flt, today)]
 
     async def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
-        """The whole site is one page: the continent's stays with an open
-        slot from `flt.date_from` on (at least `flt.min_days` long), nearest
-        first. The country is left to the caller (it matches on ISO codes)."""
+        """The whole site is one page: the continent's stays (or those in the
+        filter's circle) with an open slot from `flt.date_from` on (at least
+        `flt.min_days` long), nearest first. The country is left to the
+        caller (it matches on ISO codes)."""
         today = self._clock()
         since = max(today, flt.date_from or today)
-        keyed = [
-            (first_open_start(l, since, flt.min_days), l) for l in await self._all() if l.continent == flt.continent
-        ]
+        keyed = [(first_open_start(l, since, flt.min_days), l) for l in await self._all() if in_area(l, flt)]
         yield [l for k, l in sorted((kl for kl in keyed if kl[0]), key=lambda kl: (kl[0], kl[1].id))]
 
     async def countries(self, continent: str) -> list[Country]:

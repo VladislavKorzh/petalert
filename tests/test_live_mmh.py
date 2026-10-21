@@ -35,6 +35,7 @@ def test_the_map_has_every_assignment_and_every_country_is_known():
     assert total > 50 and len(listings) == total
     assert [l.place for l in listings if not l.continent] == []
     assert all(l.slots for l in listings)
+    assert all(l.lat is not None and l.lon is not None for l in listings)  # /search around a town
 
 
 def test_listing_page_and_photo_exist():

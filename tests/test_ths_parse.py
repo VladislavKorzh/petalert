@@ -27,6 +27,7 @@ def test_fields_url_and_photo():
     assert listing.url == "https://www.trustedhousesitters.com/house-and-pet-sitting-assignments/l/2214923/"
     assert listing.continent == "europe" and listing.country == "portugal"
     assert listing.place == "Espiche, Faro, Portugal" and listing.country_code == "pt"
+    assert (listing.lat, listing.lon) == (37.10189, -8.73795)
     assert listing.photo_url.startswith(
         "https://res.cloudinary.com/trustedhousesitters/image/upload/t_social_media_preview/remote_media/"
     )
@@ -35,6 +36,12 @@ def test_fields_url_and_photo():
     assert (slot.start, slot.end, slot.days, slot.is_open) == (
         date(2026, 12, 9), date(2027, 1, 9), 31, True,
     )
+
+
+def test_missing_coordinates_are_fine():
+    r = raw("2214923")
+    del r["location"]["coordinates"]
+    assert (parse_listing(r).lat, parse_listing(r).lon) == (None, None)
 
 
 def test_confirmed_and_reviewing_slots_are_not_open():

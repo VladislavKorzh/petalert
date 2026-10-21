@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from petalert.models import PETS, Filter
+from petalert.models import PETS, Circle, Filter
 from petalert.sources.ths import build_query
 
 TODAY = date(2026, 10, 17)
@@ -27,6 +27,13 @@ def test_country_uses_slug_never_country_code():
     f = build_query(Filter(continent="europe", country="portugal"), TODAY)["filters"]
     # The API silently ignores countryCode — a "Portugal" filter would return the whole world.
     assert f["geoHierarchy"] == {"countrySlug": "portugal"}
+
+
+def test_a_circle_replaces_the_place():
+    f = build_query(Filter("", near=Circle(36.7213, -4.4214, 100)), TODAY)["filters"]
+    # A distance without a unit is an HTTP 400 ("Must be a number followed by a valid OpenSearch distance unit").
+    assert f["geoPoint"] == {"latitude": 36.7213, "longitude": -4.4214, "distance": "100km"}
+    assert "geoHierarchy" not in f
 
 
 def test_past_date_from_is_clamped_to_today_and_date_to_only_when_set():

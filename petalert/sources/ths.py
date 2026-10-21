@@ -88,14 +88,14 @@ def build_query(
         duration["maximum"] = flt.max_days
     if duration:
         assignments["durationInDays"] = duration
-    filters: dict[str, Any] = {
-        "activeMembership": True,
-        "assignments": assignments,
+    filters: dict[str, Any] = {"activeMembership": True, "assignments": assignments}
+    if flt.near:
+        # The site's own "near this place" search (from its JS bundle); the
+        # distance wants a unit. Verified live on 2026-10-21, with START_SORT too.
+        filters["geoPoint"] = {"latitude": flt.near.lat, "longitude": flt.near.lon, "distance": f"{flt.near.km}km"}
+    else:
         # The API silently ignores countryCode — slug only.
-        "geoHierarchy": (
-            {"countrySlug": flt.country} if flt.country else {"continentSlug": flt.continent}
-        ),
-    }
+        filters["geoHierarchy"] = {"countrySlug": flt.country} if flt.country else {"continentSlug": flt.continent}
     if flt.pets:
         filters["pets"] = [{"type": pet} for pet in sorted(flt.pets)]
     if published_before:
@@ -117,6 +117,13 @@ def _published(raw: dict[str, Any]) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(value).replace(tzinfo=LONDON).astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coordinate(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
 
@@ -144,6 +151,7 @@ def parse_listing(raw: dict[str, Any]) -> Listing:
             place_parts.append(part)
     photos = raw.get("photos") or []
     cover = next((p for p in photos if p.get("coverPhoto")), photos[0] if photos else None)
+    point = loc.get("coordinates") or {}
     return Listing(
         source="ths",
         id=listing_id,
@@ -159,6 +167,8 @@ def parse_listing(raw: dict[str, Any]) -> Listing:
         slots=slots,
         published=_published(raw),
         country_code=(loc.get("countryCode") or "").lower() or None,
+        lat=_coordinate(point.get("lat")),
+        lon=_coordinate(point.get("lon")),
     )
 
 

@@ -11,6 +11,7 @@ spam alerts.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -30,6 +31,31 @@ PETS: tuple[str, ...] = (
 )
 
 
+EARTH_KM = 6371.0  # mean radius
+
+
+def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance (haversine): what THS's `geoPoint` filter
+    measures too (verified 2026-10-21: the same listings within 150 km)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 2 * EARTH_KM * math.asin(math.sqrt(h))
+
+
+@dataclass(frozen=True)
+class Circle:
+    """`km` around a point: /search around a town."""
+
+    lat: float
+    lon: float
+    km: int
+
+    def contains(self, listing: Listing) -> bool:
+        if listing.lat is None or listing.lon is None:
+            return False
+        return distance_km(self.lat, self.lon, listing.lat, listing.lon) <= self.km
+
+
 @dataclass(frozen=True)
 class Filter:
     continent: str
@@ -43,6 +69,9 @@ class Filter:
     # exclude, so the source queries the whole continent and the local filter
     # drops the excluded countries.
     exclude_countries: tuple[str, ...] = ()
+    # Instead of the continent and country: a circle, which crosses borders
+    # (/search around a town; continent "").
+    near: Circle | None = None
 
     def to_json(self) -> str:
         """Canonical JSON — also the key that groups identical subscriptions."""
@@ -59,6 +88,8 @@ class Filter:
         # new group key and orphan their query_state.
         if self.exclude_countries:
             data["exclude_countries"] = sorted(self.exclude_countries)
+        if self.near:
+            data["near"] = [self.near.lat, self.near.lon, self.near.km]
         return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
     @classmethod
@@ -73,6 +104,7 @@ class Filter:
             max_days=d.get("max_days"),
             pets=tuple(d.get("pets") or ()),
             exclude_countries=tuple(d.get("exclude_countries") or ()),
+            near=Circle(*d["near"]) if d.get("near") else None,
         )
 
 
@@ -107,6 +139,10 @@ class Listing:
     slots: tuple[Slot, ...] = field(default=())
     published: datetime | None = None  # last (re)publication, UTC; None if unknown
     country_code: str | None = None  # ISO 3166 alpha-2, lower case ("pt") — display only
+    # Where it is, as the site puts it on its map (THS: the town's centre); for
+    # /search around a town. None: the site doesn't say.
+    lat: float | None = None
+    lon: float | None = None
 
 
 @dataclass(frozen=True)
@@ -116,8 +152,13 @@ class Country:
     count: int
 
 
+def in_area(listing: Listing, flt: Filter) -> bool:
+    """In the filter's circle, or else on its continent (the country aside)."""
+    return flt.near.contains(listing) if flt.near else listing.continent == flt.continent
+
+
 def listing_matches(listing: Listing, flt: Filter) -> bool:
-    if listing.continent != flt.continent:
+    if not in_area(listing, flt):
         return False
     if flt.country and listing.country != flt.country:
         return False

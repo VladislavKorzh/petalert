@@ -28,7 +28,8 @@ from petalert.bot.format import PAGE_SIZE
 from petalert.bot.manage import SiteToggle, SubAction
 from petalert.bot.search import BUSY, SEARCH_HELP
 from petalert.db import Store
-from petalert.models import Country, Filter, Listing, Slot
+from petalert.geocode import GeocodeError, Town
+from petalert.models import Circle, Country, Filter, Listing, Slot
 
 USER = 7
 CHAT = Chat(id=USER, type="private")
@@ -87,6 +88,21 @@ class FakeSource:
             yield page
 
 
+class FakeGeocoder:
+    """Towns by name; `fails`: the lookup itself fails."""
+
+    def __init__(self):
+        self.towns = {"malaga": Town("Málaga", "es", 36.7648, -4.4422)}
+        self.asked: list[tuple[str, str | None]] = []
+        self.fails = False
+
+    async def town(self, query, country=None):
+        self.asked.append((query, country))
+        if self.fails:
+            raise GeocodeError("HTTP 503")
+        return self.towns.get(query.lower())
+
+
 class FakeWorker:
     def __init__(self):
         self.wakes = 0
@@ -102,7 +118,8 @@ class Harness:
         self.bot = Bot("42:TEST", session=self.session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.worker = FakeWorker()
         self.source = FakeSource()
-        self.dp = build_dispatcher(store, {"ths": self.source}, self.worker, frozenset({USER}))
+        self.geocoder = FakeGeocoder()
+        self.dp = build_dispatcher(store, {"ths": self.source}, self.worker, frozenset({USER}), self.geocoder)
         self.loop = asyncio.new_event_loop()
 
     def _feed(self, update: Update) -> list[Any]:
@@ -427,7 +444,7 @@ class OtherSource(FakeSource):
 def two(tmp_path):
     h = Harness(Store(tmp_path / "two.sqlite3"))
     h.other = OtherSource()
-    h.dp = build_dispatcher(h.store, {"ths": h.source, "mmh": h.other}, h.worker, frozenset({USER}))
+    h.dp = build_dispatcher(h.store, {"ths": h.source, "mmh": h.other}, h.worker, frozenset({USER}), h.geocoder)
     yield h
     h.loop.close()
     h.store.close()
@@ -596,6 +613,31 @@ def test_search_with_a_minimum_length(h):
     calls = h.text(f"pt 30.11.{Y} min 14")
     assert f"🔎 <b>1 open sit</b> · start 30 Nov {Y} · 14+ days" in edits(calls)[0].text
     assert h.source.last_scope.min_days == 14
+
+
+def test_search_around_a_town_looks_it_up_and_asks_for_the_circle(h):
+    near = sit("1", "es", date(Y, 11, 2))
+    h.source.start_pages = [[Listing(**{**near.__dict__, "lat": 36.72, "lon": -4.42})]]
+    calls = h.text(f"/search malaga es 100km +60 30.10.{Y}")
+    assert texts(calls)[0] == f"🔎 Searching… Within 100 km of malaga, Spain · start 30 Oct – 29 Dec {Y}"
+    assert h.geocoder.asked == [("malaga", "es")]
+    assert h.source.last_scope.near == Circle(36.7648, -4.4422, 100)
+    (table,) = edits(calls)
+    assert table.text.startswith(
+        f"🔎 <b>1 open sit</b> · start 30 Oct – 29 Dec {Y}\n🌍 Within 100 km of Málaga, Spain\n<pre>"
+    )
+
+
+def test_search_around_a_town_that_isnt_there_or_cant_be_looked_up(h):
+    calls = h.text(f"/search malagaa 100km 30.11.{Y}")
+    assert texts(calls)[-1] == (
+        "❌ Can't find 'malagaa' on the map. Check the spelling, or add its country, like malaga es 100km."
+    )
+    assert not hasattr(h.source, "last_scope")  # the sites weren't asked
+    h.geocoder.fails = True
+    calls = h.text(f"/search malaga 100km 30.11.{Y}")
+    assert texts(calls)[-1] == "⚠️ Couldn't look the town up on OpenStreetMap. Try again in a few minutes."
+    assert texts(h.text(f"/search 100km 30.11.{Y}"))[0].startswith("❌ A radius needs a town")
 
 
 def test_search_with_every_site_off_or_one_running(h):

@@ -15,7 +15,7 @@ import pytest
 from petalert import geo
 from petalert.config import DEFAULT_THS_API_VERSION
 from petalert.http import Http
-from petalert.models import CONTINENTS, Filter, first_open_start, matching_slots
+from petalert.models import CONTINENTS, Circle, Filter, distance_km, first_open_start, matching_slots
 from petalert.sources.ths import USER_AGENT, TrustedHousesitters
 
 pytestmark = pytest.mark.skipif(os.environ.get("PETALERT_LIVE") != "1", reason="PETALERT_LIVE=1")
@@ -85,3 +85,24 @@ def test_by_start_is_ordered_by_the_first_open_start(min_days):
     pages = run(two_pages)  # by_start itself raises if the order breaks
     keys = [first_open_start(l, since, min_days) for page in pages for l in page]
     assert len(keys) > 150 and keys == sorted(keys)
+
+
+def test_by_start_in_a_circle_keeps_to_it_across_borders():
+    """/search around a town: THS's geoPoint, ordered as by_start needs."""
+    since = date.today() + timedelta(days=1)
+    geneva = Circle(46.2044, 6.1432, 100)  # Switzerland and France
+
+    async def nearest(ths):
+        listings = []
+        async for page in ths.by_start(Filter("", near=geneva, date_from=since)):
+            listings += page
+            if len(listings) >= 200:  # two pages at most
+                break
+        return listings
+
+    listings = run(nearest)
+    keys = [first_open_start(l, since) for l in listings]
+    assert len(listings) > 5 and keys == sorted(keys)  # 18 on 2026-10-21
+    assert {"ch", "fr"} <= {l.country_code for l in listings}
+    # The same distance as ours, give or take the Earth's radius THS takes.
+    assert all(distance_km(geneva.lat, geneva.lon, l.lat, l.lon) <= geneva.km + 1 for l in listings)

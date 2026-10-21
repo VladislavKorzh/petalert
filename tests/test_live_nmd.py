@@ -65,6 +65,7 @@ def test_the_first_result_page_parses_and_every_country_is_known():
     assert [l.place for l in listings if not l.continent] == []
     assert sum(bool(l.slots) for l in listings) >= PER_PAGE - 2  # a few flexible stays have no dates
     assert any(l.pets for l in listings)
+    assert all(l.lat is not None and l.lon is not None for l in listings)  # /search around a town
 
 
 def test_a_stay_page_has_its_card_and_a_photo():

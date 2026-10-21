@@ -34,7 +34,7 @@ from datetime import date
 from html import unescape
 
 from ..http import Http
-from ..models import Country, Filter, Listing, Slot, first_open_start, listing_matches, matching_slots
+from ..models import Country, Filter, Listing, Slot, first_open_start, in_area, listing_matches, matching_slots
 from .base import Notice, SourceError
 
 log = logging.getLogger(__name__)
@@ -115,8 +115,10 @@ _FOUND = re.compile(r"Found (\d+) assignments?")
 # Both are single-quoted JS strings (\' and friends escaped). The title option
 # is optional here, so a marker without it still parses (with the popup title).
 _MARKER = re.compile(
-    r"(?:\{ title: '((?:[^'\\]|\\.)*)' \}\);\s*)?marker\d+\.bindPopup\('((?:[^'\\]|\\.)*)'"
+    r"(?:\{ title: '((?:[^'\\]|\\.)*)' \}\);\s*)?marker(\d+)\.bindPopup\('((?:[^'\\]|\\.)*)'"
 )
+# Where it is: `const markerN = L.marker(new L.LatLng(37.0164626,  -7.9351983), …`.
+_POINT = re.compile(r"\bmarker(\d+) = L\.marker\(new L\.LatLng\((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)")
 _ID = re.compile(r'href="/sitters/assignment/(\d+)"')
 _TITLE = re.compile(r'<h2 class="title">(.*?)</h2>', re.S)
 _IMG = re.compile(r'<img src="([^"]+)"')
@@ -145,9 +147,10 @@ def _js(raw: str) -> str:
     return re.sub(r"\\(.)", r"\1", raw)
 
 
-def parse_popup(popup: str, full_title: str = "") -> Listing:
-    """One map marker's popup (already unescaped from JS) → Listing.
-    The id, the place and the dates are required (ValueError/KeyError/AttributeError)."""
+def parse_popup(popup: str, full_title: str = "", point: tuple[float, float] | None = None) -> Listing:
+    """One map marker's popup (already unescaped from JS) → Listing, at the
+    marker's `point` (lat, lon). The id, the place and the dates are required
+    (ValueError/KeyError/AttributeError)."""
     listing_id = _ID.search(popup).group(1)  # type: ignore[union-attr]
     parts = [p.strip() for p in _text(_PLACE.search(popup).group(1)).split(",")]  # type: ignore[union-attr]
     parts = [p for p in parts if p]
@@ -194,6 +197,8 @@ def parse_popup(popup: str, full_title: str = "") -> Listing:
         pets=tuple(pets),
         slots=tuple(slots),
         country_code=code,
+        lat=point[0] if point else None,
+        lon=point[1] if point else None,
     )
 
 
@@ -205,11 +210,12 @@ def parse_page(html: str) -> tuple[list[Listing], int]:
     if found is None:
         raise SourceError(f"MindMyHouse page changed: no results summary ({len(markers)} markers)")
     total = int(found.group(1))
+    points = {n: (float(lat), float(lon)) for n, lat, lon in _POINT.findall(html)}
     listings: dict[str, Listing] = {}
-    for title, raw in markers:
+    for title, n, raw in markers:
         popup = _js(raw)
         try:
-            listing = parse_popup(popup, _js(title))
+            listing = parse_popup(popup, _js(title), points.get(n))
         except (AttributeError, IndexError, KeyError, ValueError) as exc:
             log.warning("MindMyHouse: could not parse a marker: %r %s", exc, popup[:200])
             continue
@@ -302,6 +308,11 @@ class MindMyHouse:
             )
         if len(listings) >= 20 and not any(l.pets for l in listings):
             await self._tell_once("pets", "MindMyHouse: no listing has pets — the pets markup changed?")
+        if len(listings) >= 20 and not any(l.lat is not None for l in listings):
+            await self._tell_once(
+                "points", "MindMyHouse: no marker has coordinates — the map script changed? /search around a "
+                "town finds nothing here until fixed.",
+            )
         return listings
 
     async def search(self, flt: Filter, *, max_pages: int | None) -> list[Listing]:
@@ -311,14 +322,13 @@ class MindMyHouse:
         return [l for l in await self._all() if listing_matches(l, flt) and matching_slots(l, flt, today)]
 
     async def by_start(self, flt: Filter) -> AsyncIterator[list[Listing]]:
-        """The whole site is one page: the continent's listings with an open
-        slot from `flt.date_from` on (at least `flt.min_days` long), nearest
-        first. The country is left to the caller (it matches on ISO codes)."""
+        """The whole site is one page: the continent's listings (or those in
+        the filter's circle) with an open slot from `flt.date_from` on (at
+        least `flt.min_days` long), nearest first. The country is left to the
+        caller (it matches on ISO codes)."""
         today = self._clock()
         since = max(today, flt.date_from or today)
-        keyed = [
-            (first_open_start(l, since, flt.min_days), l) for l in await self._all() if l.continent == flt.continent
-        ]
+        keyed = [(first_open_start(l, since, flt.min_days), l) for l in await self._all() if in_area(l, flt)]
         yield [l for k, l in sorted((kl for kl in keyed if kl[0]), key=lambda kl: (kl[0], kl[1].id))]
 
     async def countries(self, continent: str) -> list[Country]:

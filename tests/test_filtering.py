@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
-from petalert.models import Filter, Listing, Slot, listing_matches, matching_slots
+from petalert.models import (
+    Circle,
+    Filter,
+    Listing,
+    Slot,
+    distance_km,
+    listing_matches,
+    matching_slots,
+)
 
 TODAY = date(2026, 10, 17)
 
@@ -65,6 +74,22 @@ def test_filter_json_is_canonical():
     b = Filter("europe", pets=("cat", "dog"), date_from=date(2026, 11, 1))
     assert a.to_json() == b.to_json()
     assert Filter.from_json(a.to_json()) == Filter("europe", pets=("cat", "dog"), date_from=date(2026, 11, 1))
+
+
+def test_distances_and_circles():
+    assert round(distance_km(38.7223, -9.1393, 41.1579, -8.6291)) == 274  # Lisbon – Porto
+    lisbon = Circle(38.7223, -9.1393, 50)
+    cascais = replace(listing(), lat=38.6979, lon=-9.4215)  # 25 km
+    assert lisbon.contains(cascais) and not replace(lisbon, km=20).contains(cascais)
+    assert not lisbon.contains(listing())  # no coordinates
+
+
+def test_a_circle_takes_the_place_of_the_continent_and_country():
+    flt = Filter("", near=Circle(38.7223, -9.1393, 50))
+    assert listing_matches(replace(listing(), continent="africa", lat=38.6979, lon=-9.4215), flt)
+    assert not listing_matches(listing(), flt)
+    assert Filter.from_json(flt.to_json()) == flt
+    assert "near" not in Filter("europe").to_json()  # old subscriptions keep their key
 
 
 def test_excluded_countries_are_dropped():
