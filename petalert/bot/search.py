@@ -117,7 +117,8 @@ async def run_search(message: Message, query: Search, store: Store, sources, sea
             return
         items = [Item(listing, slots, []) for listing, slots in found.items]
         list_id = store.add_alert_list(chat, pack(items, head))
-        text, markup = list_message(items, list_id, 0, head)
+        titles = {key: source.title for key, source in sources.items()}
+        text, markup = list_message(items, list_id, 0, head, sites=titles)
         await progress.edit_text(text, reply_markup=markup, link_preview_options=NO_PREVIEW)
     finally:
         searching.discard(chat)

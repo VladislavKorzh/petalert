@@ -549,7 +549,8 @@ def test_search_answers_with_a_table_whose_numbers_open_the_sites(h):
     assert table.text.startswith(
         f"🔎 <b>2 open sits</b> · start 27 Nov – 3 Dec {Y}\n🌍 Europe except United Kingdom\n<pre>"
     )
-    assert " 1 29.11–10.01" in table.text and "FR Town3" in table.text and "GB" not in table.text
+    assert " 1 T 29.11–10.01" in table.text and "FR Town3" in table.text and "GB" not in table.text
+    assert "\n🌐 <code>T</code> TrustedHousesitters\n" in table.text
     numbers = table.reply_markup.inline_keyboard[0]
     assert [(b.text, b.url) for b in numbers] == [("1", "https://x/l/3/"), ("2", "https://x/l/2/")]
 

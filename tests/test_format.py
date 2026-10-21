@@ -72,37 +72,47 @@ def dated(i: str, start: str, end: str) -> Slot:
     return Slot(i, date.fromisoformat(start), date.fromisoformat(end), True)
 
 
-def placed(lid: str, place: str, code: str | None) -> Listing:
+SITES = {"ths": "TrustedHousesitters", "mmh": "MindMyHouse", "nmd": "Nomador"}
+
+
+def placed(lid: str, place: str, code: str | None, source: str = "ths") -> Listing:
     return Listing(
-        source="ths", id=lid, title="t", url=f"https://x/l/{lid}/", continent="europe",
+        source=source, id=lid, title="t", url=f"https://x/l/{lid}/", continent="europe",
         country="x", place=place, photo_url=None, pets=(), country_code=code,
     )
 
 
 def test_table_layout():
     items = [
-        (placed("1", "Kungsbacka, Halland, Sweden", "se"), [dated("a", "2026-11-02", "2026-11-09")], [1]),
+        (placed("1", "Kungsbacka, Halland, Sweden", "se", "nmd"), [dated("a", "2026-11-02", "2026-11-09")], [1]),
         (
             placed("2", "Villefranche-sur-Mer, Provence, France", "fr"),
             [dated("b", "2026-12-09", "2027-01-09"), dated("c", "2027-02-05", "2027-02-20")],
             [1, 3],
         ),
-        (placed("3", "<Odd & Co>", None), [dated("d", "2027-03-01", "2027-06-01")], [1]),
+        (placed("3", "<A & B>", None), [dated("d", "2027-03-01", "2027-06-01")], [1]),
     ]
-    assert render_table(items, 0) == (
+    assert render_table(items, 0, sites=SITES) == (
         "🔔 <b>3 new sits</b> · Subscriptions #1, #3\n"
-        "<pre> # Dates      Days Where\n"
-        " 1 02.11–09.11   7 🇸🇪 SE Kungsbacka\n"
-        " 2 09.12–09.01  31 🇫🇷 FR Villefran…\n"
-        "   05.02–20.02  15\n"
-        " 3 01.03–01.06  92 📍 &lt;Odd &amp; Co&gt;</pre>\n"
+        "<pre> #   Dates      Days Where\n"
+        " 1 N 02.11–09.11   7 🇸🇪 SE Kungsba…\n"
+        " 2 T 09.12–09.01  31 🇫🇷 FR Villefr…\n"
+        "     05.02–20.02  15\n"
+        " 3 T 01.03–01.06  92 📍 &lt;A &amp; B&gt;</pre>\n"
+        "🌐 <code>T</code> TrustedHousesitters · <code>N</code> Nomador\n"  # the sites on the page, in /sites order
         "👇 Tap a number to open it on the site"
     )
 
 
+def test_a_site_no_longer_known_gets_its_key_in_an_old_table():
+    items = [(placed("1", "Lisbon", "pt", "xyz"), [dated("a", "2026-12-01", "2026-12-10")], [1])]
+    text = render_table(items, 0, sites=SITES)
+    assert " 1 X 01.12–10.12" in text and "\n🌐 <code>X</code> xyz\n" in text
+
+
 def test_a_search_table_has_its_own_header_and_its_cards_no_subscriptions():
     items = [(placed("1", "Lisbon", "pt"), [dated("a", "2026-12-01", "2026-12-10")], [])]
-    assert render_table(items, 0, "🔎 <b>1 open sit</b>").startswith("🔎 <b>1 open sit</b>\n<pre>")
+    assert render_table(items, 0, "🔎 <b>1 open sit</b>", sites=SITES).startswith("🔎 <b>1 open sit</b>\n<pre>")
     text, _ = render_alert(listing(), [slot(1), slot(2)], [], "MindMyHouse")
     assert "🗓 <b>Open dates:</b>" in text and text.endswith("\n\n🌐 MindMyHouse")
     assert "New date" not in text and "Subscription" not in text
@@ -111,11 +121,11 @@ def test_a_search_table_has_its_own_header_and_its_cards_no_subscriptions():
 def test_table_pages_and_many_dates():
     one = (placed("1", "Lisbon", "pt"), [dated(str(i), "2026-12-01", "2026-12-10") for i in range(5)], [2])
     items = [one] * (PAGE_SIZE + 3)
-    first = render_table(items, 0)
+    first = render_table(items, 0, sites=SITES)
     assert first.startswith(f"🔔 <b>{PAGE_SIZE + 3} new sits</b> · Subscription #2\n")
     assert first.count("Lisbon") == PAGE_SIZE and first.count("+ 2 more") == PAGE_SIZE
-    second = render_table(items, 1)
-    assert second.count("Lisbon") == 3 and f"\n{PAGE_SIZE + 1:>2} 01.12" in second
+    second = render_table(items, 1, sites=SITES)
+    assert second.count("Lisbon") == 3 and f"\n{PAGE_SIZE + 1:>2} T 01.12" in second
     # A full page of listings with dates still fits a message and a phone row.
     assert tg_len(first) < TEXT_LIMIT
     rows = first.split("<pre>")[1].split("</pre>")[0].split("\n")
@@ -123,7 +133,7 @@ def test_table_pages_and_many_dates():
 
 
 def test_city_is_cut_without_a_dangling_space():
-    assert city(placed("1", "Frankfurt am Main, Hesse, Germany", "de")) == "Frankfurt…"
+    assert city(placed("1", "Frankfurt am Main, Hesse, Germany", "de")) == "Frankfu…"
     assert city(placed("1", "Lisbon, Portugal", "pt")) == "Lisbon"
     assert city(placed("1", "", "pt")) == "X"  # no place: the country slug
 

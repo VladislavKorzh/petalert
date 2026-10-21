@@ -23,8 +23,9 @@ needed for any:
   any sit or date range not on the site when you subscribed counts as new
   (on MindMyHouse, edited dates too).
 - One new sit arrives as a card with a photo; several at once as one table
-  (dates, days, place; nearest dates first), where a number opens the listing
-  on its site and ◀ ▶ flip the pages.
+  (site, dates, days, place; nearest dates first), where a number opens the
+  listing on its site and ◀ ▶ flip the pages. A letter marks each row's site
+  (T, M, N), and the line under the table names them.
 - `/search` for what is open now, by start date — see [Search](#search).
 - Multiple users, each with their own subscriptions (`/new`, `/list`) and sites (`/sites`).
 - Access via single-use invite codes.
@@ -74,6 +75,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 Every subscription then watches it (indexing it silently first), and users can
 turn it off in `/sites`. A site whose one search returns everything sets
 `always_complete = True`, so the worker schedules no extra full crawls for it.
+Tables mark a site's rows with the first letter of its `title`: give a new site
+one that no other site starts with.
 
 ## Running locally
 

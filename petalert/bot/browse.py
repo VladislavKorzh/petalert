@@ -14,6 +14,7 @@ those buttons keep working until their table expires (ALERT_LIST_TTL).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import date
 from typing import Annotated, Any, NamedTuple
 
@@ -107,8 +108,9 @@ def _nav(list_id: int, view: str, n: int, total: int) -> list[InlineKeyboardButt
 
 
 def list_message(
-    items: list[Item], list_id: int, page: int = 0, header: str | None = None
+    items: list[Item], list_id: int, page: int = 0, header: str | None = None, *, sites: Mapping[str, str]
 ) -> tuple[str, InlineKeyboardMarkup]:
+    """A page of the table; `sites` (key → name) names the letters of its site column."""
     first = page * PAGE_SIZE
     numbers = [
         InlineKeyboardButton(text=str(n + 1), url=items[n].listing.url)
@@ -117,7 +119,7 @@ def list_message(
     rows = [numbers[i : i + NUMBERS_PER_ROW] for i in range(0, len(numbers), NUMBERS_PER_ROW)]
     if pages(len(items)) > 1:
         rows.append(_nav(list_id, "page", page, pages(len(items))))
-    return render_table(items, page, header), InlineKeyboardMarkup(inline_keyboard=rows)
+    return render_table(items, page, header, sites=sites), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def card_message(
@@ -149,14 +151,14 @@ async def on_browse(query: CallbackQuery, callback_data: Browse, store: Store, s
         return
     items, header = unpack(raw)
     view, n = callback_data.view, callback_data.n
+    titles = {key: source.title for key, source in sources.items()}
     if view == "noop":
         await answer(query)
     elif view == "page" and 0 <= n < pages(len(items)):
-        text, markup = list_message(items, callback_data.list_id, n, header)
+        text, markup = list_message(items, callback_data.list_id, n, header, sites=titles)
         await answer(query)
         await edit(query, text, markup, preview=NO_PREVIEW)
     elif view == "card" and 0 <= n < len(items):
-        titles = {key: source.title for key, source in sources.items()}
         text, markup, preview = card_message(items, callback_data.list_id, n, titles)
         await answer(query)
         await edit(query, text, markup, preview=preview)

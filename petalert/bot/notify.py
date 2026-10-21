@@ -84,7 +84,7 @@ class TelegramOutbox:
         # fails — a timeout can come after Telegram delivered the message, and
         # its buttons must work; an orphan row is pruned with the rest.
         list_id = self.store.add_alert_list(chat_id, pack(shown))
-        text, markup = list_message(shown, list_id)
+        text, markup = list_message(shown, list_id, sites=self.source_titles)
         await self._call(
             self.bot.send_message, chat_id=chat_id, text=text, reply_markup=markup,
             link_preview_options=NO_PREVIEW,
