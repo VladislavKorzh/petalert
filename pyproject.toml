@@ -13,6 +13,11 @@ dependencies = [
     # has MockTransport for tests and a simple `proxy=` (0.28 removed
     # `proxies=`, hence the 0.28 floor).
     "httpx>=0.28,<1",
+    # Nomador sits behind Cloudflare, which challenges Python's own TLS
+    # handshake (the OpenSSL 3.0 of Ubuntu 24.04's Python 3.12) whatever the
+    # IP. curl_cffi shakes hands like Chrome; only requests that ask for it
+    # use it (Http's `browser`). 0.x, so capped below 1 like httpx.
+    "curl_cffi>=0.16,<1",
 ]
 
 [project.optional-dependencies]

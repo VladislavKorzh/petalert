@@ -3,12 +3,15 @@
 A Telegram bot that checks house-sitting sites every ~30 minutes and messages
 you when **new open dates** match your filters — both on brand-new listings and
 on existing listings where the owner has added new dates. Sources, no login
-needed for either:
+needed for any:
 
 - [TrustedHousesitters](https://www.trustedhousesitters.com) — the search
   page's internal JSON API;
 - [MindMyHouse](https://www.mindmyhouse.com) — the search page's HTML: its map
-  script lists every assignment on the site (~200), so one request covers it.
+  script lists every assignment on the site (~200), so one request covers it;
+- [Nomador](https://www.nomador.com) — its map API lists every open stay
+  (~820) in one request; places, dates and pets come from the result pages,
+  read in full every 3 hours, and in between from the page of each new stay.
 
 - A subscription is a set of filters; it watches every site you have on
   (`/sites`, all on by default). A site you turn on is indexed silently first.
@@ -16,9 +19,9 @@ needed for either:
   after you subscribed. On THS an old listing the bot merely sees for the first
   time (or a sit that only re-opens) is noted silently, never alerted. Nor is
   a sit already sent whose dates the host deleted and added again.
-  MindMyHouse has no publication times or date ids, so there any sit or date
-  range not on the site when you subscribed counts as new — including edited
-  dates.
+  MindMyHouse and Nomador have no publication times or growing ids, so there
+  any sit or date range not on the site when you subscribed counts as new
+  (on MindMyHouse, edited dates too).
 - One new sit arrives as a card with a photo; several at once as one table
   (dates, days, place; nearest dates first), where a number opens the listing
   on its site and ◀ ▶ flip the pages.
@@ -29,17 +32,18 @@ needed for either:
   fit entirely inside it), min/max days, pets ("has at least one of").
 - Optional residential proxy (e.g. Decodo): a fallback by default, or always-on.
 
-> **Note:** this uses an undocumented internal API of TrustedHousesitters and
-> the HTML of MindMyHouse, and may break whenever they change them. Automated
-> access may be against their terms of service — keep the request rate low and
-> use it at your own risk.
+> **Note:** this uses undocumented internal APIs of TrustedHousesitters and
+> Nomador and the HTML of MindMyHouse and Nomador, and may break whenever they
+> change them. Nomador's Cloudflare turns away Python's own TLS handshake, so
+> those requests present Chrome's (curl_cffi). Automated access may be against
+> their terms of service — keep the request rate low and use it at your own risk.
 
 ## How it works
 
 ```
 Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /list, /sites
                 │
-             SQLite ⇄ Worker (asyncio, ~30 min ± 10%) → sources["ths" | "mmh"].search()
+             SQLite ⇄ Worker (asyncio, ~30 min ± 10%) → sources["ths" | "mmh" | "nmd"].search()
                          · each subscription × each site its chat has on
                          · identical (site, filter) pairs share one request
                          · baseline per subscription and site: everything current
@@ -59,7 +63,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 | `petalert/geo.py` | ISO country codes → names and continents (as THS groups them) |
 | `petalert/sources/ths.py` | THS query and parsing, `api-version` self-healing on 406 |
 | `petalert/sources/mmh.py` | MindMyHouse page parsing, its country → continent table |
-| `petalert/http.py` | retries, backoff, proxy, at most one request every 2 s |
+| `petalert/sources/nmd.py` | Nomador: the map, the result pages crawled by stay length, stay pages; an index of the site kept between crawls |
+| `petalert/http.py` | retries, backoff, proxy, Chrome's TLS handshake on request (curl_cffi), at most one request every 2 s |
 | `petalert/scheduler.py` | worker: grouping, baseline, dedup, delivery, admin health alerts |
 | `petalert/db.py` | SQLite: subscriptions, per-site baselines (`watch`), sites per chat (`chat_source`), `delivered`, `query_state`, alert tables, invite codes |
 | `petalert/bot/` | dialog, management, access gate, message texts, sending |
@@ -83,6 +88,7 @@ uv run python -m petalert.sources countries --continent europe
 uv run python -m petalert.sources search --continent europe --country portugal --min-days 14
 uv run python -m petalert.sources search --continent europe --exclude united-kingdom
 uv run python -m petalert.sources --source mmh search --continent europe
+uv run python -m petalert.sources --source nmd search --continent europe   # crawls first: ~2 min
 uv run python -m petalert search "eu(-uk), ±3, 30.11.2026 -"   # what /search finds
 
 uv run python -m petalert codes generate 5   # codes + deep links t.me/<bot>?start=<code>
@@ -112,7 +118,7 @@ opens the sit on its site:
 - Places: `eu`/`europe`, `asia`, `africa`, `oceania`, `north america`,
   `south america`; countries by ISO code (`pt`, `uk` = `gb`) or name;
   `-xx` (also inside `eu(…)`) leaves a country out. No place = anywhere.
-  Matching is by the listing's country code, which both sites give.
+  Matching is by the listing's country code, which every site gives.
 - `±N` (`+-N`, `+/-N`) widens the range of start dates on both sides, `+N`
   only after, `-N` only before (up to 180 days each); how long a sit lasts
   doesn't matter (but see `min N`). A search starts from tomorrow.
@@ -126,8 +132,8 @@ search reads one continent or country nearest-start first and stops once it is
 past the range or has 100 matches — usually one or two pages (~110 KB each
 through the proxy), not a crawl. Plain page numbers reach 1000 listings; a
 search that needs more says so. If THS ever stops honouring the sort, the
-search reports THS as failed and the admin hears about it. MindMyHouse answers
-from its cached page.
+search reports THS as failed and the admin hears about it. MindMyHouse and
+Nomador answer from what they have cached (Nomador: its index of the site).
 
 ## Invite codes
 
@@ -163,6 +169,12 @@ in total. A single country is usually one request. Subscriptions with the same
 filter share the requests; at most 4 scheduled full crawls run per tick.
 MindMyHouse is one ~45 KB request per tick whatever the filters, and it goes
 direct: the site doesn't block datacenter IPs, so the proxy is only its fallback.
+Nomador goes direct too, whatever the filters: its map (~26 KB) once a tick,
+the page of each new stay (~27 KB, ~40 a day), and every `FULL_CRAWL_HOURS` a
+crawl of ~85 result pages (~5 KB each, ~3 minutes at one request every 2 s).
+Its Cloudflare turns away Python's own TLS handshake whatever the IP, which is
+why those requests go through curl_cffi as Chrome; whether it also blocks
+datacenter IPs is unknown — if it does, the 403s retry through the proxy.
 
 First deployment (on the server, as a sudo user — `deploy` here):
 
@@ -189,10 +201,11 @@ ssh $HOST 'cd /srv/petalert && git pull --ff-only \
 
 **Re-indexing a site.** After a change on our side that makes old listings
 matchable for the first time — e.g. a country added to `COUNTRIES` in
-`sources/mmh.py` (the bot tells the admin when it meets an unknown one) — every
-subscription must mark what matches there now as seen, or those listings would
-be alerted as new. The bot checks right after it starts, so do it between stop
-and start, chained so a failed step never starts the bot:
+`sources/mmh.py`, or a country name to `geo.py` for Nomador (the bot tells the
+admin when it meets an unknown one) — every subscription must mark what matches
+there now as seen, or those listings would be alerted as new. The bot checks
+right after it starts, so do it between stop and start, chained so a failed
+step never starts the bot:
 
 ```bash
 ssh $HOST 'cd /srv/petalert && sudo systemctl stop petalert && git pull --ff-only \
@@ -202,7 +215,7 @@ ssh $HOST 'cd /srv/petalert && sudo systemctl stop petalert && git pull --ff-onl
 ```
 
 It is quiet (no messages to users); sits that appeared since the last check
-are marked seen too.
+are marked seen too. For Nomador it is `rebaseline nmd`.
 
 If `deploy/petalert.service` changed, also `sudo cp` it into
 `/etc/systemd/system/` and run `sudo systemctl daemon-reload` before restarting.
@@ -237,6 +250,18 @@ Each tick logs `groups`, `full`, `listings`, `fresh`, `sent`, `failed`,
   plain pages (above 1000 results: per country, found by comparing the country
   facet with and without a cursor); only undated listings in a single country
   with more than 1000 results (e.g. the UK) stay out of reach.
+- **Nomador after a restart** needs a few minutes to index the site. Until
+  then `/new` lists only the other sites' countries and `/search` reports
+  Nomador as failed ("try again later"); the worker's first tick waits for it.
+- **Nomador's result pages stop at 500 stays** per search (a later page repeats
+  page 50), so its crawl splits the site by stay length (`BANDS` in
+  `sources/nmd.py`: ~270, ~220 and ~330 open stays on 2026-10-21). A band that
+  fills all 50 pages is reported to the admin; the stays it can't reach are
+  still read one by one from the map, 30 a tick. `test_live_nmd.py` fails
+  before that, once a band passes 400.
+- **Nomador HTTP 403 "blocked by a Cloudflare challenge"** means Chrome's
+  handshake no longer passes either: update curl_cffi
+  (`uv lock --upgrade-package curl-cffi`) and run `test_live_nmd.py`.
 - **Database backups** are not part of this repo. A consistent copy, safe while
   the bot runs (put it in a daily timer, or enable server snapshots):
   `sudo -u petalert /srv/petalert/.venv/bin/python -c "import sqlite3; sqlite3.connect('/var/lib/petalert/petalert.sqlite3').backup(sqlite3.connect('/var/lib/petalert/backup.sqlite3'))"`

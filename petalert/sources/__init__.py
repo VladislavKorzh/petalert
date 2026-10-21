@@ -6,6 +6,7 @@ from ..config import Settings
 from ..http import Http
 from .base import Notice, Source, SourceError
 from .mmh import MindMyHouse
+from .nmd import Nomador
 from .ths import TrustedHousesitters
 
 Factory = Callable[[Http, Settings, "Notice | None"], Source]
@@ -17,6 +18,9 @@ REGISTRY: dict[str, Factory] = {
         http, settings.ths_api_version, notice=notice
     ),
     "mmh": lambda http, settings, notice: MindMyHouse(http, notice=notice),
+    "nmd": lambda http, settings, notice: Nomador(
+        http, notice=notice, refresh=settings.full_crawl_every
+    ),
 }
 
 
