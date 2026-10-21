@@ -338,7 +338,7 @@ def test_table_numbers_open_the_sits_on_their_site(h):
     (page2,) = edits(h.press(Browse(list_id=list_id, view="page", n=1)))
     numbers = page2.reply_markup.inline_keyboard[0]
     assert [(b.text, b.url, b.callback_data) for b in numbers] == [
-        ("11", "https://x/l/10/", None), ("12", "https://x/l/11/", None), ("13", "https://x/l/12/", None)
+        ("11(T)", "https://x/l/10/", None), ("12(T)", "https://x/l/11/", None), ("13(T)", "https://x/l/12/", None)
     ]
 
 
@@ -367,7 +367,7 @@ def test_table_pages(h):
     list_id = table(h, 13)
     (page2,) = edits(h.press(Browse(list_id=list_id, view="page", n=1)))
     rows = page2.reply_markup.inline_keyboard
-    assert [b.text for b in rows[0]] == ["11", "12", "13"]
+    assert [b.text for b in rows[0]] == ["11(T)", "12(T)", "13(T)"]
     assert [b.text for b in rows[-1]] == ["◀", "2/2", "▶"]
     # Back from card 12 (an older table's button) lands on page 2
     (card,) = edits(h.press(Browse(list_id=list_id, view="card", n=11)))
@@ -549,10 +549,10 @@ def test_search_answers_with_a_table_whose_numbers_open_the_sites(h):
     assert table.text.startswith(
         f"🔎 <b>2 open sits</b> · start 27 Nov – 3 Dec {Y}\n🌍 Europe except United Kingdom\n<pre>"
     )
-    assert " 1 T 29.11–10.01" in table.text and "FR Town3" in table.text and "GB" not in table.text
-    assert "\n🌐 <code>T</code> TrustedHousesitters\n" in table.text
+    assert " 1 29.11–10.01" in table.text and "FR Town3" in table.text and "GB" not in table.text
+    assert "\n🌐 (T) TrustedHousesitters\n" in table.text
     numbers = table.reply_markup.inline_keyboard[0]
-    assert [(b.text, b.url) for b in numbers] == [("1", "https://x/l/3/"), ("2", "https://x/l/2/")]
+    assert [(b.text, b.url) for b in numbers] == [("1(T)", "https://x/l/3/"), ("2(T)", "https://x/l/2/")]
 
 
 def test_bare_search_explains_and_takes_the_next_message(h):

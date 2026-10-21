@@ -25,7 +25,7 @@ from pydantic import Field
 
 from ..db import Store
 from ..models import Listing, Slot
-from .format import PAGE_SIZE, TEXT_LIMIT, render_alert, render_table
+from .format import PAGE_SIZE, TEXT_LIMIT, render_alert, render_table, site_tag
 from .ui import NO_PREVIEW, answer, chat_id, edit
 
 EXPIRED = "⌛ This list has expired."
@@ -110,10 +110,11 @@ def _nav(list_id: int, view: str, n: int, total: int) -> list[InlineKeyboardButt
 def list_message(
     items: list[Item], list_id: int, page: int = 0, header: str | None = None, *, sites: Mapping[str, str]
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """A page of the table; `sites` (key → name) names the letters of its site column."""
+    """A page of the table. Its number buttons open the listings and say
+    their sites, "1(T)"; `sites` (key → name) gives the letters."""
     first = page * PAGE_SIZE
     numbers = [
-        InlineKeyboardButton(text=str(n + 1), url=items[n].listing.url)
+        InlineKeyboardButton(text=f"{n + 1}({site_tag(items[n].listing.source, sites)})", url=items[n].listing.url)
         for n in range(first, min(first + PAGE_SIZE, len(items)))
     ]
     rows = [numbers[i : i + NUMBERS_PER_ROW] for i in range(0, len(numbers), NUMBERS_PER_ROW)]

@@ -112,7 +112,7 @@ def test_table_is_stored_and_its_buttons_point_to_it():
     (sent,) = session.sent
     assert isinstance(sent, SendMessage) and "<pre>" in sent.text and sent.link_preview_options.is_disabled
     numbers = sent.reply_markup.inline_keyboard[0]
-    assert [(b.text, b.url) for b in numbers] == [("1", LISTING.url), ("2", "https://x/l/2/")]
+    assert [(b.text, b.url) for b in numbers] == [("1(T)", LISTING.url), ("2(T)", "https://x/l/2/")]
     stored, header = unpack(sender.store.alert_list(1, 5))  # the first list of a fresh database
     assert [i.listing for i in stored] == [LISTING, other] and stored[0].slots == SLOTS
     assert header is None  # an alert table: the header is the default one

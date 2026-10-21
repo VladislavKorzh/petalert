@@ -21,7 +21,7 @@ TEXT_LIMIT = 4096
 TITLE_LIMIT = 200
 PAGE_SIZE = 10  # listings per page of an alert table
 MORE_DATES = 2  # extra new dates of one listing shown in the table; its card has all
-CITY_LIMIT = 8  # a table row has to fit a phone screen (≤ 35 monospace characters)
+CITY_LIMIT = 10  # a table row has to fit a phone screen (≤ 35 monospace characters)
 
 _PLURAL = {"fish": "fish", "poultry": "poultry"}
 PET_EMOJI = {
@@ -149,15 +149,15 @@ def city(listing: Listing) -> str:
 
 
 def site_tag(source: str, sites: Mapping[str, str]) -> str:
-    """The letter a table marks a site's rows with: the first of its name
+    """The letter a table's buttons mark a site with: the first of its name
     (`ths` → T for TrustedHousesitters). A site no longer known (an old
     table) gets the first of its key."""
     return (sites.get(source) or source)[:1].upper()
 
 
-def _row(n: str, tag: str, slot: Slot, where: str = "") -> str:
+def _row(n: str, slot: Slot, where: str = "") -> str:
     dates = f"{slot.start:%d.%m}–{slot.end:%d.%m}"
-    return f"{n:>2} {tag:1} {dates:<11} {slot.days:>3} {where}".rstrip()
+    return f"{n:>2} {dates:<11} {slot.days:>3} {where}".rstrip()
 
 
 def render_table(
@@ -167,27 +167,26 @@ def render_table(
     *,
     sites: Mapping[str, str],
 ) -> str:
-    """One page of several listings as a monospace table: number, site,
-    dates, days, place — in the given order (nearest dates first). More dates
-    of the same listing get lines of their own, without a number. The header
+    """One page of several listings as a monospace table: number, dates,
+    days, place — in the given order (nearest dates first). More dates of the
+    same listing get lines of their own, without a number. The header
     defaults to that of an alert ("N new sits · Subscription #…"); under the
-    table, the names of the sites (`sites`: key → name) behind its letters."""
+    table, the names of the sites (`sites`: key → name) behind the letters
+    of its buttons ("1(T)", see browse.list_message)."""
     if header is None:
         sub_ids = sorted({i for _, _, subs in items for i in subs})
         header = f"🔔 <b>{len(items)} new sits</b> · {subscriptions_label(sub_ids)}"
-    # "Days" is wider than its numbers (≤ 3 digits): it takes the gap before them.
-    rows = [f"{'#':>2}   {'Dates':<11}Days Where"]
+    rows = [f"{'#':>2} {'Dates':<11} {'D':>3} Where"]  # D: days, up to 3 digits
     first = page * PAGE_SIZE
     shown = items[first : first + PAGE_SIZE]
     for n, (listing, slots, _) in enumerate(shown, start=first + 1):
-        where = f"{country_tag(listing.country_code)} {escape(city(listing))}"
-        rows.append(_row(str(n), site_tag(listing.source, sites), slots[0], where))
-        rows += [_row("", "", s) for s in slots[1 : 1 + MORE_DATES]]
+        rows.append(_row(str(n), slots[0], f"{country_tag(listing.country_code)} {escape(city(listing))}"))
+        rows += [_row("", s) for s in slots[1 : 1 + MORE_DATES]]
         if len(slots) > 1 + MORE_DATES:
-            rows.append(f"{'':>2}   + {len(slots) - 1 - MORE_DATES} more")
+            rows.append(f"{'':>2} + {len(slots) - 1 - MORE_DATES} more")
     on_page = {l.source for l, _, _ in shown}
     legend = " · ".join(
-        f"<code>{site_tag(key, sites)}</code> {escape(sites.get(key, key))}"
+        f"({site_tag(key, sites)}) {escape(sites.get(key, key))}"
         for key in [*sites, *sorted(on_page - set(sites))]
         if key in on_page
     )
