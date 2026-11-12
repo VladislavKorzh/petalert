@@ -72,6 +72,9 @@ class Filter:
     # Instead of the continent and country: a circle, which crosses borders
     # (/search around a town; continent "").
     near: Circle | None = None
+    # Only sits the site says are accessible by public transport. A site that
+    # doesn't say (Listing.public_transport None) has none of them.
+    public_transport: bool = False
 
     def to_json(self) -> str:
         """Canonical JSON — also the key that groups identical subscriptions."""
@@ -90,6 +93,8 @@ class Filter:
             data["exclude_countries"] = sorted(self.exclude_countries)
         if self.near:
             data["near"] = [self.near.lat, self.near.lon, self.near.km]
+        if self.public_transport:
+            data["public_transport"] = True
         return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
     @classmethod
@@ -105,6 +110,7 @@ class Filter:
             pets=tuple(d.get("pets") or ()),
             exclude_countries=tuple(d.get("exclude_countries") or ()),
             near=Circle(*d["near"]) if d.get("near") else None,
+            public_transport=bool(d.get("public_transport")),
         )
 
 
@@ -143,6 +149,8 @@ class Listing:
     # /search around a town. None: the site doesn't say.
     lat: float | None = None
     lon: float | None = None
+    # Accessible by public transport, as the site says; None: it doesn't say.
+    public_transport: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +174,8 @@ def listing_matches(listing: Listing, flt: Filter) -> bool:
         return False
     if flt.pets and not {name for name, _ in listing.pets} & set(flt.pets):
         return False
+    if flt.public_transport and listing.public_transport is not True:
+        return False  # not saying counts as no, as on THS itself
     return True
 
 

@@ -67,6 +67,7 @@ class FakeSession(BaseSession):
 class FakeSource:
     key = "ths"
     title = "TrustedHousesitters"
+    knows_public_transport = True
     during_countries = None  # hook: runs while the "network" call is in flight
 
     async def countries(self, continent):
@@ -172,8 +173,13 @@ def test_full_new_dialog_creates_an_unbaselined_subscription(h):
     (markup_edit,) = [c for c in toggled if isinstance(c, EditMessageReplyMarkup)]
     assert markup_edit.reply_markup.inline_keyboard[0][1].text == "✅ 🐈 Cat"
 
-    confirm = texts(h.press(Pick(step="pets", value="done")))[0]
+    transport = texts(h.press(Pick(step="pets", value="done")))[0]
+    assert "Step 6 · Public transport" in transport
+    assert "Only TrustedHousesitters says whether" in transport
+
+    confirm = texts(h.press(Pick(step="pt", value="1")))[0]
     assert "Where: Portugal (Europe)" in confirm and "Pets: 🐈 cat" in confirm
+    assert "🚌 Accessible by public transport" in confirm
 
     saved = texts(h.press(Pick(step="save")))[0]
     assert "Subscription #1 saved" in saved
@@ -181,7 +187,7 @@ def test_full_new_dialog_creates_an_unbaselined_subscription(h):
     assert sub.status == "active" and h.store.watches(USER) == {}  # indexed on the next tick
     assert sub.filter == Filter(
         "europe", country="portugal", date_from=date(2030, 11, 1), date_to=date(2031, 1, 31),
-        min_days=7, pets=("cat",),
+        min_days=7, pets=("cat",), public_transport=True,
     )
     assert h.worker.wakes == 1
 
@@ -198,11 +204,23 @@ def test_all_except_dialog(h):
     assert "Step 3 · Dates" in texts(h.press(Pick(step="edone")))[0]
     h.press(Pick(step="dates", value="*"))
     h.press(Pick(step="dur", value="*"))
-    confirm = texts(h.press(Pick(step="pets", value="*")))[0]
-    assert "Where: Europe, except Portugal" in confirm
+    h.press(Pick(step="pets", value="*"))
+    confirm = texts(h.press(Pick(step="pt", value="0")))[0]
+    assert "Where: Europe, except Portugal" in confirm and "public transport" not in confirm
     h.press(Pick(step="save"))
     (sub,) = h.store.subscriptions(USER)
     assert sub.filter == Filter("europe", exclude_countries=("portugal",))
+
+
+def test_a_forged_transport_choice_is_rejected(h):
+    h.text("/new")
+    h.press(Pick(step="cont", value="asia"))
+    h.press(Pick(step="ctry", value="*"))
+    h.press(Pick(step="dates", value="*"))
+    h.press(Pick(step="dur", value="*"))
+    h.press(Pick(step="pets", value="*"))
+    assert answers(h.press(Pick(step="pt", value="yes"))) == ["Unknown choice"]
+    assert "Check your subscription" in texts(h.press(Pick(step="pt", value="1")))[0]
 
 
 def test_commands_win_over_dialog_text_steps(h):
@@ -270,6 +288,7 @@ def test_double_tap_on_save_creates_one_subscription(h):
     h.press(Pick(step="dates", value="*"))
     h.press(Pick(step="dur", value="*"))
     h.press(Pick(step="pets", value="*"))
+    h.press(Pick(step="pt", value="0"))
     h.press(Pick(step="save"))
     assert answers(h.press(Pick(step="save"))) == [STALE]
     assert len(h.store.subscriptions(USER)) == 1
@@ -435,6 +454,7 @@ def test_table_button_on_an_inaccessible_message_sends_the_card_anew(h):
 class OtherSource(FakeSource):
     key = "mmh"
     title = "MindMyHouse"
+    knows_public_transport = False
 
     async def countries(self, continent):
         return [Country("france", "France", 27), Country("spain", "Spain", 5)]
@@ -459,7 +479,9 @@ def test_with_two_sites_one_subscription_covers_both_and_countries_merge(two):
     two.press(Pick(step="ctry", value="2"))
     two.press(Pick(step="dates", value="*"))
     two.press(Pick(step="dur", value="*"))
-    confirm = texts(two.press(Pick(step="pets", value="*")))[0]
+    transport = texts(two.press(Pick(step="pets", value="*")))[0]
+    assert "Only TrustedHousesitters says whether" in transport  # not MindMyHouse
+    confirm = texts(two.press(Pick(step="pt", value="0")))[0]
     assert "🌐 Sites: TrustedHousesitters, MindMyHouse (change in /sites)" in confirm
     two.press(Pick(step="save"))
     (sub,) = two.store.subscriptions(USER)
@@ -506,6 +528,7 @@ def test_sites_does_not_end_an_open_new_dialog(two):
     two.press(Pick(step="dates", value="*"))
     two.press(Pick(step="dur", value="*"))
     two.press(Pick(step="pets", value="*"))
+    two.press(Pick(step="pt", value="0"))
     two.text("/sites")
     two.press(SiteToggle(source="mmh", on=False))
     assert "saved" in texts(two.press(Pick(step="save")))[0]

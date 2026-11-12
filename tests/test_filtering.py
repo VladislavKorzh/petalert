@@ -92,6 +92,16 @@ def test_a_circle_takes_the_place_of_the_continent_and_country():
     assert "near" not in Filter("europe").to_json()  # old subscriptions keep their key
 
 
+def test_public_transport_needs_the_site_to_say_yes():
+    flt = Filter("europe", public_transport=True)
+    assert listing_matches(replace(listing(), public_transport=True), flt)
+    assert not listing_matches(replace(listing(), public_transport=False), flt)
+    assert not listing_matches(listing(), flt)  # the site doesn't say: MindMyHouse, Nomador
+    assert listing_matches(listing(), Filter("europe"))
+    assert Filter.from_json(flt.to_json()) == flt
+    assert "public_transport" not in Filter("europe").to_json()  # old subscriptions keep their key
+
+
 def test_excluded_countries_are_dropped():
     flt = Filter("europe", exclude_countries=("united-kingdom",))
     assert not listing_matches(listing(country="united-kingdom"), flt)

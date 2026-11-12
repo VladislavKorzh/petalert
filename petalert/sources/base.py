@@ -31,6 +31,9 @@ class Source(Protocol):
     # Optional: `always_complete = True` if every search returns all matches
     # whatever max_pages (one request is the whole site): every tick is then a
     # full crawl and the worker schedules none.
+    # Optional: `knows_public_transport = True` if its listings say whether
+    # they are accessible by public transport (Listing.public_transport). A
+    # filter asking for it gets nothing from the other sites; /new names these.
 
     async def countries(self, continent: str) -> list[Country]:
         """Countries of the continent that have open sits right now, largest first."""

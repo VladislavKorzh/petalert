@@ -62,6 +62,13 @@ SMALL_TOTAL = 300
 # `dateTo`: not one out of order. /search relies on it to stop early.
 START_SORT = [{"function": {"name": "SIT_START_DATE", "order": "asc"}}]
 LONDON = ZoneInfo("Europe/London")  # `published` is naive local time of the site
+# The search page's "Accessible by public transport" (its home features,
+# `web_homeFeaturesType_isAccessibleByPublicTransport` in the page). Verified
+# live 2026-11-12: Europe 3140 listings, 2207 with `true`, 901 with `false`
+# (the rest don't say). The results don't carry the answer, so the listings
+# of a query with it are marked accessible, and `_check_transport` checks
+# that THS still honours it.
+TRANSPORT = "isAccessibleByPublicTransport"
 _VERSION_RE = re.compile(r'"apiVersion":"([0-9]{4}-[0-9]{2}-[0-9]{2})"')
 
 
@@ -98,6 +105,8 @@ def build_query(
         filters["geoHierarchy"] = {"countrySlug": flt.country} if flt.country else {"continentSlug": flt.continent}
     if flt.pets:
         filters["pets"] = [{"type": pet} for pet in sorted(flt.pets)]
+    if flt.public_transport:
+        filters[TRANSPORT] = True
     if published_before:
         filters["published"] = {"before": published_before}  # inclusive
     return {
@@ -175,6 +184,7 @@ def parse_listing(raw: dict[str, Any]) -> Listing:
 class TrustedHousesitters:
     key = "ths"
     title = "TrustedHousesitters"
+    knows_public_transport = True
 
     def __init__(
         self,
@@ -268,6 +278,8 @@ class TrustedHousesitters:
             except (KeyError, TypeError, ValueError) as exc:
                 log.warning("THS: could not parse listing %s: %r", raw.get("id"), exc)
                 continue
+            if flt.public_transport:
+                listing = replace(listing, public_transport=True)  # THS said so by returning it
             parsed += 1
             if refresh:
                 seen[listing.id] = listing
@@ -297,6 +309,8 @@ class TrustedHousesitters:
             dated.update(str(r["id"]) for r in results if r.get("published") and "id" in r)
             if pages == 1:
                 first_total = total
+                if flt.public_transport:
+                    await self._check_transport(flt, today, total)
                 if total <= SMALL_TOTAL:
                     limit = None
             cursor = results[-1].get("published") if results else None
@@ -354,6 +368,35 @@ class TrustedHousesitters:
             if len(results) < PER_PAGE or page * PER_PAGE >= total:
                 return
         raise TooBroad(f"only the nearest {RESULT_LIMIT} listings could be checked — narrow the places or dates")
+
+    async def _total(self, flt: Filter, today: date, transport: bool | None) -> int:
+        """How many listings match, with TRANSPORT `true`, `false` or left out."""
+        query = build_query(replace(flt, public_transport=False), today)
+        if transport is not None:
+            query["filters"][TRANSPORT] = transport
+        query["resultsPerPage"] = 1
+        data = await self._query(query)
+        try:
+            return int(data["total"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SourceError(f"THS response shape changed: {str(data)[:200]}") from exc
+
+    async def _check_transport(self, flt: Filter, today: date, total: int) -> None:
+        """The answer isn't in the results, so the local filter can't check
+        it: a THS ignoring TRANSPORT would have every new sit alerted as
+        accessible. No listing is both accessible and not, so the two counts
+        add up to at most all of them; an ignored filter counts all of them
+        twice. One small request a search (two when the counts tie)."""
+        if not total:
+            return
+        not_accessible = await self._total(flt, today, False)
+        if not_accessible != total:
+            return  # an ignored filter counts the same either way
+        everything = await self._total(flt, today, None)
+        if total + not_accessible > everything:
+            raise SourceError(
+                f"THS ignores {TRANSPORT}: {total} accessible + {not_accessible} not, of {everything}"
+            )
 
     async def _country_counts(self, flt: Filter, today: date, before: str | None) -> dict[str, int]:
         query = build_query(flt, today, published_before=before, facets=("country",))

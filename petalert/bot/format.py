@@ -234,11 +234,12 @@ def describe_filter(flt: Filter) -> str:
     else:
         length = "any"
     pets = " or ".join(f"{PET_EMOJI.get(p, '')} {p}" for p in flt.pets) if flt.pets else "any"
-    return "\n".join(
-        [
-            f"🌍 Where: {escape(where)}",
-            f"📅 Dates: {dates}",
-            f"⏳ Length: {length}",
-            f"🐾 Pets: {escape(pets)}",
-        ]
-    )
+    lines = [
+        f"🌍 Where: {escape(where)}",
+        f"📅 Dates: {dates}",
+        f"⏳ Length: {length}",
+        f"🐾 Pets: {escape(pets)}",
+    ]
+    if flt.public_transport:
+        lines.append("🚌 Accessible by public transport")
+    return "\n".join(lines)

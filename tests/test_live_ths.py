@@ -40,6 +40,17 @@ def test_europe_first_page_parses_and_has_open_dates():
     assert sum(len(matching_slots(l, flt, date.today())) for l in listings) > 0
 
 
+def test_public_transport_filter_splits_the_listings():
+    # The results don't say which listing is accessible, so the filter is all
+    # there is: yes and no must be apart and leave out the ones that don't say.
+    async def counts(ths):
+        flt = Filter("europe", country="portugal")
+        return [await ths._total(flt, date.today(), value) for value in (True, False, None)]
+
+    yes, no, everything = run(counts)
+    assert yes > 0 and no > 0 and yes + no <= everything
+
+
 def test_country_facet_works():
     countries = run(lambda ths: ths.countries("europe"))
     assert any(c.slug == "united-kingdom" for c in countries)

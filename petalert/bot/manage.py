@@ -20,7 +20,7 @@ HELP = (
     "🐾 <b>House-sit alerts</b>\n"
     "I watch house-sitting sites and message you as soon as new sits match your filters.\n\n"
     "<b>Commands</b>\n"
-    "➕ /new — create a subscription (continent, country, dates, length, pets)\n"
+    "➕ /new — create a subscription (continent, country, dates, length, pets, public transport)\n"
     "📋 /list — your subscriptions: pause, resume, delete\n"
     "🔎 /search — open sits by start date, e.g. <code>eu(-uk) ±3 30.11.2026</code>\n"
     "🌐 /sites — which sites you get alerts from\n"

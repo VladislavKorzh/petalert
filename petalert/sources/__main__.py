@@ -39,6 +39,7 @@ def _filter(args: argparse.Namespace) -> Filter:
         max_days=args.max_days,
         pets=pets,
         exclude_countries=tuple(c.strip() for c in args.exclude.split(",")) if args.exclude else (),
+        public_transport=args.public_transport,
     )
 
 
@@ -89,6 +90,7 @@ def main() -> None:
         p.add_argument("--max-days", type=int)
         p.add_argument("--pets", help="comma-separated: cat,dog")
         p.add_argument("--exclude", help="comma-separated country slugs: united-kingdom,ireland")
+        p.add_argument("--public-transport", action="store_true", help="only sits accessible by public transport")
         if name == "search":
             p.add_argument("--pages", type=int, default=1, help="0 = all pages")
         else:

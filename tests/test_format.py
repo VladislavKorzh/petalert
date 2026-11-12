@@ -165,6 +165,9 @@ def test_describe_filter():
     assert describe_filter(Filter("asia")) == (
         "🌍 Where: Asia, any country\n📅 Dates: any\n⏳ Length: any\n🐾 Pets: any"
     )
+    assert describe_filter(Filter("asia", public_transport=True)).endswith(
+        "🐾 Pets: any\n🚌 Accessible by public transport"
+    )
 
 
 def test_country_name():

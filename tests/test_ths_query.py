@@ -56,6 +56,12 @@ def test_only_given_duration_bounds_are_sent():
     assert "durationInDays" not in a
 
 
+def test_public_transport_is_sent_only_when_asked():
+    # The search page's "Accessible by public transport"; `false` would ask for the opposite.
+    assert build_query(Filter("europe", public_transport=True), TODAY)["filters"]["isAccessibleByPublicTransport"] is True
+    assert "isAccessibleByPublicTransport" not in build_query(Filter("europe"), TODAY)["filters"]
+
+
 def test_pet_types_are_exactly_the_site_strings():
     f = build_query(Filter(continent="europe", pets=("small pet", "cat")), TODAY)["filters"]
     assert f["pets"] == [{"type": "cat"}, {"type": "small pet"}]

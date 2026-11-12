@@ -438,3 +438,35 @@ def test_by_start_past_the_page_number_limit_is_too_broad():
     with pytest.raises(TooBroad, match="nearest 1000"):
         read(fake, Filter("europe"))
     assert len(fake.requests) == 10
+
+
+def transport_feed(yes: int, no: int, everything: int, *, ignored: bool = False):
+    """THS counting by `isAccessibleByPublicTransport`, or ignoring it."""
+
+    def handler(r):
+        value = json.loads(r.url.params["query"])["filters"].get("isAccessibleByPublicTransport")
+        total = everything if ignored or value is None else yes if value else no
+        return httpx.Response(200, json=page_of(min(total, 3), total))
+
+    return Fake(handler)
+
+
+def test_listings_of_a_public_transport_search_are_marked_accessible():
+    fake = transport_feed(yes=3, no=2, everything=6)
+    listings = fake.run(lambda ths: ths.search(Filter("europe", public_transport=True), max_pages=1))
+    assert len(listings) == 3 and all(listing.public_transport is True for listing in listings)
+    flags = [(q["filters"].get("isAccessibleByPublicTransport"), q["resultsPerPage"]) for q in fake.queries()]
+    assert flags == [(True, 100), (False, 1)]  # counts differ: honoured, no third request
+
+
+def test_a_ths_ignoring_public_transport_is_an_error_not_a_flood_of_alerts():
+    fake = transport_feed(yes=0, no=0, everything=5, ignored=True)
+    with pytest.raises(SourceError, match="ignores isAccessibleByPublicTransport"):
+        fake.run(lambda ths: ths.search(Filter("europe", public_transport=True), max_pages=1))
+
+
+def test_equal_counts_are_settled_by_the_total():
+    fake = transport_feed(yes=2, no=2, everything=5)
+    listings = fake.run(lambda ths: ths.search(Filter("europe", public_transport=True), max_pages=1))
+    assert len(listings) == 2
+    assert [q["filters"].get("isAccessibleByPublicTransport") for q in fake.queries()] == [True, False, None]

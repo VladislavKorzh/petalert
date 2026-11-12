@@ -1,4 +1,4 @@
-"""The /new dialog: continent → country → dates → length → pets → Save.
+"""The /new dialog: continent → country → dates → length → pets → public transport → Save.
 
 A subscription is site-agnostic: it watches every site the chat has on
 (/sites), so the country list merges those sites' countries.
@@ -57,6 +57,7 @@ class NewSub(StatesGroup):
     dates = State()
     duration = State()
     pets = State()
+    transport = State()
     confirm = State()
 
 
@@ -220,6 +221,15 @@ def pets_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def transport_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🚌 Only accessible by public transport", callback_data=Pick(step="pt", value="1"))
+    kb.button(text="🚗 Doesn't matter", callback_data=Pick(step="pt", value="0"))
+    _cancel(kb)
+    kb.adjust(1)
+    return kb.as_markup()
+
+
 def confirm_keyboard() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="💾 Save", callback_data=Pick(step="save"))
@@ -241,6 +251,7 @@ def _filter(data: dict) -> Filter:
         max_days=data.get("max_days"),
         pets=tuple(data.get("pets") or ()),
         exclude_countries=tuple(data.get("exclude") or ()),
+        public_transport=bool(data.get("public_transport")),
     )
 
 
@@ -354,6 +365,20 @@ async def ask_pets(target: Message, state: FSMContext, *, edit: bool) -> None:
         "Leave empty for any, then <b>Done</b>."
     )
     await _show(target, state, text, pets_keyboard(selected), edit=edit)
+
+
+async def ask_transport(target: Message, state: FSMContext, sources, *, edit: bool) -> None:
+    await state.set_state(NewSub.transport)
+    knowing = " and ".join(s.title for s in sources.values() if getattr(s, "knows_public_transport", False))
+    if knowing:
+        note = (
+            f"Only {knowing} says whether a sit is accessible by public transport, "
+            "so with this on, sits from the other sites are left out."
+        )
+    else:
+        note = "No site says whether a sit is accessible by public transport, so with this on, nothing matches."
+    text = f"🚌 <b>Step 6 · Public transport</b>\nOnly sits you can reach without a car?\n<i>{note}</i>"
+    await _show(target, state, text, transport_keyboard(), edit=edit)
 
 
 async def ask_confirm(target: Message, state: FSMContext, store: Store, sources, *, edit: bool) -> None:
@@ -525,11 +550,20 @@ async def on_pet_toggle(query: CallbackQuery, callback_data: Pick, state: FSMCon
     await answer(query)
 
 
-async def on_pets_done(
-    query: CallbackQuery, callback_data: Pick, state: FSMContext, store: Store, sources
-) -> None:
+async def on_pets_done(query: CallbackQuery, callback_data: Pick, state: FSMContext, sources) -> None:
     if callback_data.value == ANY:
         await state.update_data(pets=[])
+    await ask_transport(query.message, state, sources, edit=True)
+    await answer(query)
+
+
+async def on_transport(
+    query: CallbackQuery, callback_data: Pick, state: FSMContext, store: Store, sources
+) -> None:
+    if callback_data.value not in {"0", "1"}:
+        await answer(query, "Unknown choice", show_alert=True)
+        return
+    await state.update_data(public_transport=callback_data.value == "1")
     await ask_confirm(query.message, state, store, sources, edit=True)
     await answer(query)
 
@@ -569,5 +603,6 @@ def build_router() -> Router:
     router.message.register(on_duration_text, NewSub.duration, F.text, ~F.text.startswith("/"))
     router.callback_query.register(on_pet_toggle, NewSub.pets, Pick.filter(F.step == "pet"))
     router.callback_query.register(on_pets_done, NewSub.pets, Pick.filter(F.step == "pets"))
+    router.callback_query.register(on_transport, NewSub.transport, Pick.filter(F.step == "pt"))
     router.callback_query.register(on_save, NewSub.confirm, Pick.filter(F.step == "save"))
     return router

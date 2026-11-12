@@ -31,7 +31,9 @@ needed for any:
 - Multiple users, each with their own subscriptions (`/new`, `/list`) and sites (`/sites`).
 - Access via single-use invite codes.
 - Filters: continent, country (or "all except…"), a date window (the sit must
-  fit entirely inside it), min/max days, pets ("has at least one of").
+  fit entirely inside it), min/max days, pets ("has at least one of"),
+  accessible by public transport. Only THS says the last, so with it on the
+  other sites' sits are left out, as THS leaves out its own that don't say.
 - Optional residential proxy (e.g. Decodo): a fallback by default, or always-on.
 
 > **Note:** this uses undocumented internal APIs of TrustedHousesitters and
@@ -77,6 +79,8 @@ Telegram ⇄ aiogram (long polling) ── invite-code gate → /new (FSM) → /
 Every subscription then watches it (indexing it silently first), and users can
 turn it off in `/sites`. A site whose one search returns everything sets
 `always_complete = True`, so the worker schedules no extra full crawls for it.
+A site whose listings say whether they are accessible by public transport
+fills `Listing.public_transport` and sets `knows_public_transport = True`.
 Table buttons mark a site with the first letter of its `title`: give a new site
 one that no other site starts with.
 
@@ -92,6 +96,7 @@ PETALERT_LIVE=1 uv run pytest tests/test_live_*.py     # live sites: catches dri
 uv run python -m petalert.sources countries --continent europe
 uv run python -m petalert.sources search --continent europe --country portugal --min-days 14
 uv run python -m petalert.sources search --continent europe --exclude united-kingdom
+uv run python -m petalert.sources search --continent europe --country portugal --public-transport
 uv run python -m petalert.sources --source mmh search --continent europe
 uv run python -m petalert.sources --source nmd search --continent europe   # crawls first: ~2 min
 uv run python -m petalert search "eu(-uk), ±3, 30.11.2026 -"   # what /search finds
@@ -252,6 +257,14 @@ Each tick logs `groups`, `full`, `listings`, `fresh`, `sent`, `failed`,
   the admin; update `THS_API_VERSION` in `.env` too.
 - **401** from THS means the Referer/auth requirements changed — the code needs
   a fix.
+- **Public transport is THS's word only.** Its results don't say which listing
+  is accessible, so a filter asking for it (`isAccessibleByPublicTransport`,
+  from the search page) takes THS at its word: every listing it returns is
+  marked accessible. To make sure THS still honours it, each such search also
+  counts the listings that aren't (one ~5 KB request a tick, two when the
+  counts tie). If THS stops honouring it, those searches fail ("THS ignores
+  isAccessibleByPublicTransport") and the admin hears after 3 ticks, rather
+  than every new sit being alerted as accessible. `test_live_ths.py` checks it too.
 - **A user blocked the bot** → their subscriptions are paused.
 - **A subscription's date window is over** → it is paused and the user is told.
 - **THS refuses to page past 1000 results**, so full crawls page with a cursor
