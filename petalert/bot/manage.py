@@ -14,7 +14,7 @@ from ..db import Store, Subscription
 from ..scheduler import Worker
 from .browse import Id
 from .format import describe_filter
-from .ui import STALE, answer, chat_id, edit
+from .ui import PAUSED, STALE, answer, chat_id, edit
 
 HELP = (
     "🐾 <b>House-sit alerts</b>\n"
@@ -29,6 +29,12 @@ HELP = (
     "Sites are checked about every 30 minutes; several new sits at once "
     "arrive as one table — tap a number to open the sit on its site."
 )
+
+
+def help_text(alerts: bool) -> str:
+    """HELP, under the pause notice while alerts are off."""
+    return HELP if alerts else f"{PAUSED}\n\n{HELP}"
+
 
 SITES_HELP = (
     "🌐 <b>Sites</b>\n"
@@ -93,13 +99,13 @@ def sub_keyboard(sub: Subscription) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-async def cmd_start(message: Message, state: FSMContext) -> None:
+async def cmd_start(message: Message, state: FSMContext, alerts: bool) -> None:
     await state.clear()
-    await message.answer("👋 Welcome!\n\n" + HELP)
+    await message.answer("👋 Welcome!\n\n" + help_text(alerts))
 
 
-async def cmd_help(message: Message) -> None:
-    await message.answer(HELP)
+async def cmd_help(message: Message, alerts: bool) -> None:
+    await message.answer(help_text(alerts))
 
 
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
@@ -108,11 +114,13 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await message.answer("✖️ Cancelled." if had_dialog else "🤷 Nothing to cancel.")
 
 
-async def cmd_list(message: Message, state: FSMContext, store: Store, sources) -> None:
+async def cmd_list(message: Message, state: FSMContext, store: Store, sources, alerts: bool) -> None:
     await state.clear()
+    if not alerts:
+        await message.answer(PAUSED)  # they can still be paused or deleted below
     subs = store.subscriptions(message.chat.id)
     if not subs:
-        await message.answer("📭 No subscriptions yet. Create one with /new.")
+        await message.answer("📭 No subscriptions yet." + (" Create one with /new." if alerts else ""))
         return
     watches = store.watches(message.chat.id)
     for sub in subs:
@@ -125,7 +133,7 @@ async def cmd_sites(message: Message, store: Store, sources) -> None:
 
 
 async def on_site_toggle(
-    query: CallbackQuery, callback_data: SiteToggle, store: Store, worker: Worker, sources
+    query: CallbackQuery, callback_data: SiteToggle, store: Store, worker: Worker, sources, alerts: bool
 ) -> None:
     key = callback_data.source
     if key not in sources:
@@ -139,7 +147,8 @@ async def on_site_toggle(
         store.set_source(chat, key, on)
         if on:
             worker.wake()  # index it now, not in half an hour
-        await answer(query, f"{title} on — indexing current listings" if on else f"{title} off")
+        indexing = " — indexing current listings" if on and alerts else ""  # (off: /search only)
+        await answer(query, f"{title} {'on' if on else 'off'}{indexing}")
     await edit(query, SITES_HELP, sites_keyboard(store, sources, chat))
 
 

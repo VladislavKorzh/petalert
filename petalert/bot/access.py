@@ -17,14 +17,14 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject, Update, User
 
 from ..db import CODE_LENGTH, Store, normalize_code
-from .manage import HELP
+from .manage import help_text
 from .ui import answer
 
 log = logging.getLogger(__name__)
 
 INVITE_ONLY = "🔒 This bot is invite-only. Send your access code."
 BAD_CODE = "❌ Invalid or already used code."
-WELCOME = "🎉 You're in!\n\n" + HELP
+WELCOME = "🎉 You're in!\n\n" + help_text(alerts=True)
 
 
 def code_from_text(text: str) -> str | None:
@@ -39,9 +39,10 @@ def code_from_text(text: str) -> str | None:
 
 
 class AccessGate(BaseMiddleware):
-    def __init__(self, store: Store, admins: frozenset[int]):
+    def __init__(self, store: Store, admins: frozenset[int], *, alerts: bool = True):
         self.store = store
         self.admins = admins
+        self.welcome = "🎉 You're in!\n\n" + help_text(alerts)
 
     def allowed(self, user_id: int) -> bool:
         return user_id in self.admins or self.store.is_allowed(user_id)
@@ -74,7 +75,7 @@ class AccessGate(BaseMiddleware):
             log.info("bad code from %s", user_id)
             return BAD_CODE
         log.info("user %s signed in with a code", user_id)
-        return WELCOME
+        return self.welcome
 
     async def reply(self, message: Message, text: str) -> None:
         await message.answer(text)

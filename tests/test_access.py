@@ -7,6 +7,7 @@ import pytest
 from aiogram.types import Chat, Message, Update, User
 
 from petalert.bot.access import BAD_CODE, INVITE_ONLY, WELCOME, AccessGate, code_from_text
+from petalert.bot.ui import PAUSED
 from petalert.db import Store, format_code
 
 
@@ -18,8 +19,8 @@ def store(tmp_path):
 
 
 class Gate(AccessGate):
-    def __init__(self, *a):
-        super().__init__(*a)
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
         self.replies: list[str] = []
 
     async def reply(self, message, text):
@@ -74,3 +75,11 @@ def test_admins_pass_without_code_and_groups_are_ignored(store):
     assert run(gate, "/new", 1)
     assert not run(gate, "/new", 1, chat_type="group")
     assert gate.replies == []
+
+
+def test_a_code_redeemed_while_alerts_are_off_is_welcomed_with_the_pause_notice(store):
+    (code,) = store.generate_codes(1)
+    gate = Gate(store, frozenset(), alerts=False)
+
+    assert not run(gate, f"/start {code}", 5)
+    assert gate.replies[-1].startswith("🎉 You're in!") and PAUSED in gate.replies[-1]

@@ -53,3 +53,11 @@ def test_malformed_proxy_url_fails_without_echoing_the_secret():
         Settings.load({"PROXY_URL": "user-abc:s3cret@gate.decodo.com:7000"})
     assert "s3cret" not in str(exc.value)
     assert Settings.load({"PROXY_URL": "http://u:p@gate.decodo.com:7000"}).proxy_url
+
+
+def test_alerts_are_on_unless_switched_off():
+    assert Settings.load({}).alerts is True
+    assert Settings.load({"ALERTS": "on"}).alerts is True
+    assert Settings.load({"ALERTS": "OFF"}).alerts is False
+    with pytest.raises(ValueError):  # a typo must not leave the polling on unnoticed
+        Settings.load({"ALERTS": "no"})

@@ -34,6 +34,9 @@ class Source(Protocol):
     # Optional: `knows_public_transport = True` if its listings say whether
     # they are accessible by public transport (Listing.public_transport). A
     # filter asking for it gets nothing from the other sites; /new names these.
+    # Optional: `async def warm()` if /search answers from something that takes
+    # minutes to build (an index of the site). The worker's ticks keep it fresh
+    # by searching; with alerts off (ALERTS=off) it calls this instead.
 
     async def countries(self, continent: str) -> list[Country]:
         """Countries of the continent that have open sits right now, largest first."""

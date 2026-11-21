@@ -35,6 +35,7 @@ needed for any:
   accessible by public transport. Only THS says the last, so with it on the
   other sites' sits are left out, as THS leaves out its own that don't say.
 - Optional residential proxy (e.g. Decodo): a fallback by default, or always-on.
+- Alerts can be paused (`ALERTS=off`), leaving only `/search`.
 
 > **Note:** this uses undocumented internal APIs of TrustedHousesitters and
 > Nomador and the HTML of MindMyHouse and Nomador, and may break whenever they
@@ -242,6 +243,29 @@ ssh $HOST 'cd /srv/petalert && sudo systemctl stop petalert && git pull --ff-onl
 
 It is quiet (no messages to users); sits that appeared since the last check
 are marked seen too. For Nomador it is `rebaseline nmd`.
+
+**Pausing alerts.** `ALERTS=off` in `.env` (then restart) stops the worker's
+ticks: no site is polled, nothing is baselined or sent, and the startup line
+in the log says `alerts: OFF`, with no `tick:` lines after it. Subscriptions
+stay in the database. `/search` works as before — it asks the sites when
+someone searches, THS through the proxy as always, so the proxy traffic is then
+only what the searches cost. `/new` answers that alerts are paused, and `/list`,
+`/start` and `/help` say so too; subscribers are not told otherwise.
+
+One thing still runs in the background: Nomador's index, which `/search`
+answers from and which takes ~3 minutes to build. It is refreshed as the ticks
+did it (the map every `POLL_INTERVAL_MIN`, a crawl every `FULL_CRAWL_HOURS`),
+direct, not through the proxy — unless Nomador blocks the server's IP, which
+shows in the log as `(proxy=False): HTTP 403` on its URLs. Without it a search
+after a quiet few hours would wait for the crawl. To stop that too, drop the
+`self._warm()` call in `Worker.run` (`scheduler.py`).
+
+Turning alerts back on (`ALERTS=on`, restart): the first ticks crawl every
+filter in full, and every sit that appeared during the pause is news — after
+a long pause that is a lot of messages (50 a tick per chat). To resume
+quietly, from now on, re-index each site between stop and start, as in
+"Re-indexing a site" above: `rebaseline ths`, `rebaseline mmh`,
+`rebaseline nmd`.
 
 If `deploy/petalert.service` changed, also `sudo cp` it into
 `/etc/systemd/system/` and run `sudo systemctl daemon-reload` before restarting.

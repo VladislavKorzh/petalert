@@ -35,7 +35,7 @@ from ..db import Store
 from ..models import CONTINENTS, PETS, Country, Filter
 from ..scheduler import Worker
 from .format import PET_EMOJI, describe_filter
-from .ui import STALE, answer, chat_id, edit, edit_markup
+from .ui import PAUSED, STALE, answer, chat_id, edit, edit_markup
 
 log = logging.getLogger(__name__)
 
@@ -392,8 +392,12 @@ async def ask_confirm(target: Message, state: FSMContext, store: Store, sources,
     await _show(target, state, text, confirm_keyboard(), edit=edit)
 
 
-async def cmd_new(message: Message, state: FSMContext, store: Store, sources) -> None:
+async def cmd_new(message: Message, state: FSMContext, store: Store, sources, alerts: bool) -> None:
     await state.clear()
+    if not alerts:
+        # A subscription saved now would promise alerts that don't come.
+        await message.answer(PAUSED)
+        return
     if not store.enabled_sources(message.chat.id, sources):
         await message.answer(ALL_OFF)
         return

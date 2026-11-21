@@ -27,6 +27,7 @@ from petalert.bot.dialog import ALL_OFF, Pick
 from petalert.bot.format import PAGE_SIZE
 from petalert.bot.manage import SiteToggle, SubAction
 from petalert.bot.search import BUSY, SEARCH_HELP
+from petalert.bot.ui import PAUSED
 from petalert.db import Store
 from petalert.geocode import GeocodeError, Town
 from petalert.models import Circle, Country, Filter, Listing, Slot
@@ -113,14 +114,16 @@ class FakeWorker:
 
 
 class Harness:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, *, alerts: bool = True):
         self.store = store
         self.session = FakeSession()
         self.bot = Bot("42:TEST", session=self.session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.worker = FakeWorker()
         self.source = FakeSource()
         self.geocoder = FakeGeocoder()
-        self.dp = build_dispatcher(store, {"ths": self.source}, self.worker, frozenset({USER}), self.geocoder)
+        self.dp = build_dispatcher(
+            store, {"ths": self.source}, self.worker, frozenset({USER}), self.geocoder, alerts=alerts
+        )
         self.loop = asyncio.new_event_loop()
 
     def _feed(self, update: Update) -> list[Any]:
@@ -669,3 +672,46 @@ def test_search_with_every_site_off_or_one_running(h):
     h.store.set_source(USER, "ths", True)
     h.dp["searching"].add(USER)
     assert texts(h.text(f"/search pt 30.11.{Y}")) == [BUSY]
+
+
+# --- alerts off (ALERTS=off): only /search does anything ---------------------
+
+
+@pytest.fixture
+def paused(tmp_path):
+    harness = Harness(Store(tmp_path / "paused.sqlite3"), alerts=False)
+    yield harness
+    harness.loop.close()
+    harness.store.close()
+
+
+def test_with_alerts_off_new_opens_no_dialog(paused):
+    async def never():
+        raise AssertionError("/new must not ask the sites for countries")
+
+    paused.source.during_countries = never
+    assert texts(paused.text("/new")) == [PAUSED]
+    assert texts(paused.text("/cancel")) == ["🤷 Nothing to cancel."]
+    assert paused.store.subscriptions(USER) == [] and paused.worker.wakes == 0
+
+
+def test_with_alerts_off_list_and_help_say_so(paused):
+    assert texts(paused.text("/list")) == [PAUSED, "📭 No subscriptions yet."]
+    sub_id = paused.store.add_subscription(USER, Filter("europe"))
+    notice, listing = texts(paused.text("/list"))  # still there, to pause or delete
+    assert notice == PAUSED and f"#{sub_id}" in listing
+    for command in ("/help", "/start"):
+        (text,) = texts(paused.text(command))
+        assert PAUSED in text and "/search" in text
+    (toast,) = answers(paused.press(SiteToggle(source="ths", on=False)))
+    assert toast == "TrustedHousesitters off"
+    (toast,) = answers(paused.press(SiteToggle(source="ths", on=True)))
+    assert toast == "TrustedHousesitters on"  # nothing is being indexed
+
+
+def test_with_alerts_off_search_still_answers(paused):
+    paused.source.start_pages = [[sit("3", "fr", date(Y, 11, 29)), sit("2", "pt", date(Y, 12, 1))]]
+    calls = paused.text(f"/search eu, +-3, 30.11.{Y}")
+    (table,) = edits(calls)
+    assert table.text.startswith(f"🔎 <b>2 open sits</b> · start 27 Nov – 3 Dec {Y}")
+    assert PAUSED not in table.text

@@ -21,6 +21,11 @@ Key decisions:
   about old listings.
 * **Mark after sending.** A failed send is not lost: a later tick finds the
   same slot again (the next one, or the next full crawl if only that saw it).
+* **Alerts off** (`ALERTS=off`). No tick runs at all, so nothing is polled,
+  baselined or sent, and subscriptions stay as they are. /search asks the
+  sites itself; the loop only keeps fresh what it answers from that takes
+  minutes to build (`Source.warm`: Nomador's index, which ticks kept fresh by
+  searching), and prunes.
 """
 
 from __future__ import annotations
@@ -139,8 +144,10 @@ class Worker:
         interval: timedelta,
         *,
         full_every: timedelta = timedelta(hours=3),
+        alerts: bool = True,
         clock: Callable[[], datetime] = utcnow,
     ):
+        self.alerts = alerts  # False: paused, see the module docstring
         self.store = store
         self.sources = sources
         self.outbox = outbox
@@ -155,7 +162,8 @@ class Worker:
         self._last_prune: datetime | None = None
 
     def wake(self) -> None:
-        """New subscription or resume — baseline right away, not in half an hour."""
+        """New subscription or resume — baseline right away, not in half an hour.
+        (With alerts off it waits until they are back on.)"""
         self._wake.set()
 
     async def run(self) -> None:
@@ -165,9 +173,12 @@ class Worker:
             try:
                 now = self.clock()
                 if self._next_poll is None or now >= self._next_poll:
-                    await self.tick()
+                    if self.alerts:
+                        await self.tick()
+                    else:
+                        await self._warm()
                     self._next_poll = self.clock() + self.interval * random.uniform(0.9, 1.1)
-                elif woken:
+                elif woken and self.alerts:
                     # Only on a signal, not "while anything is baselining": if the
                     # source is down, that would be a hot request loop.
                     await self.tick(only_baselining=True)
@@ -188,6 +199,19 @@ class Worker:
                 await asyncio.wait_for(self._wake.wait(), timeout)
             except TimeoutError:
                 pass
+
+    async def _warm(self) -> None:
+        """Instead of a tick while alerts are off: nothing is searched, but
+        /search must not wait minutes for what a source builds in advance."""
+        for key, source in self.sources.items():
+            warm = getattr(source, "warm", None)
+            if warm is None:
+                continue
+            try:
+                await warm()
+            except Exception as exc:
+                # /search names the site as failed; the admin isn't told every round.
+                log.warning("%s: could not keep /search fresh: %r", key, exc)
 
     async def _admin(self, text: str) -> None:
         try:

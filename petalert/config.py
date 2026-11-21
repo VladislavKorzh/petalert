@@ -69,6 +69,7 @@ class Settings:
     admin_chat_id: int | None
     proxy_url: str | None
     proxy_mode: Literal["fallback", "always"]
+    alerts: bool  # False: paused — nothing is polled or sent, only /search works
     poll_interval: timedelta
     full_crawl_every: timedelta
     db_path: pathlib.Path
@@ -80,6 +81,10 @@ class Settings:
         mode = v.get("PROXY_MODE") or "fallback"
         if mode not in ("fallback", "always"):
             raise ValueError(f"PROXY_MODE must be fallback or always, not {mode!r}")
+        alerts = (v.get("ALERTS") or "on").lower()
+        if alerts not in ("on", "off"):
+            # A typo must not quietly leave the polling on (or off).
+            raise ValueError(f"ALERTS must be on or off, not {alerts!r}")
         admin_chat = v.get("ADMIN_CHAT_ID") or ""
         db_path = pathlib.Path(v.get("DB_PATH") or "var/petalert.sqlite3")
         return cls(
@@ -88,6 +93,7 @@ class Settings:
             admin_chat_id=int(admin_chat) if admin_chat else None,
             proxy_url=_proxy_url(v.get("PROXY_URL") or ""),
             proxy_mode=mode,  # type: ignore[arg-type]
+            alerts=alerts == "on",
             poll_interval=timedelta(minutes=float(v.get("POLL_INTERVAL_MIN") or 30)),
             full_crawl_every=timedelta(hours=float(v.get("FULL_CRAWL_HOURS") or 3)),
             db_path=db_path if db_path.is_absolute() else ROOT / db_path,

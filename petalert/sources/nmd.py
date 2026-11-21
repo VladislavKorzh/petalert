@@ -414,6 +414,11 @@ class Nomador:
                 "finds nothing here until fixed.",
             )
 
+    async def warm(self) -> None:
+        """Bring the index up to date (a crawl when one is due), so that a
+        /search doesn't have to wait minutes for it. See Source."""
+        await self._all()
+
     async def search(self, flt: Filter, *, max_pages: int | None) -> list[Listing]:
         """Answered from the index of the whole site, so `max_pages` doesn't
         matter; the filter is applied here, as an API would."""

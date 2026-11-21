@@ -380,6 +380,42 @@ def test_run_loop_polls_at_start_and_baselines_on_wake(env):
     assert env.source.calls == [None, None]
 
 
+def test_with_alerts_off_nothing_is_polled_or_sent(env):
+    """ALERTS=off: no tick at the start or on a wake; a site /search answers
+    from an index is still kept fresh, and a failure there stays in the log."""
+
+    class Indexed(FakeSource):
+        key = "nmd"
+        warmed = 0
+
+        async def warm(self):
+            self.warmed += 1
+            raise SourceError("down")
+
+    indexed = env.worker.sources["nmd"] = Indexed()
+    env.worker.alerts = False
+    sub_id = env.store.add_subscription(10, FLT)  # would be baselined by the first tick
+    stale = date(2026, 10, 1)  # before the env's today: housekeeping still prunes it
+    env.store.mark_delivered(env.store.subscription(sub_id, 10), [("ths:old", stale)])
+
+    async def scenario():
+        task = asyncio.create_task(env.worker.run())
+        await asyncio.sleep(0.05)
+        env.worker.wake()  # a resume, a site turned on: no baseline tick either
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert env.source.calls == [] and indexed.calls == []
+    assert indexed.warmed == 1
+    assert env.outbox.texts == [] and env.outbox.alerts == [] and env.outbox.lists == []
+    assert env.admin == []
+    assert env.store.watches() == {}  # not baselined: it waits for alerts to come back
+    assert env.store.delivered_keys(sub_id) == set()
+
+
 def test_excluded_country_never_alerts(env):
     env.store.add_subscription(10, Filter("europe", exclude_countries=("united-kingdom",)))
     env.tick()

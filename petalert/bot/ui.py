@@ -15,6 +15,11 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, LinkPreviewOptions, Message
 
 STALE = "⌛ This button has expired. Start again with /new."
+# ALERTS=off: the worker polls and sends nothing (scheduler.py).
+PAUSED = (
+    "⏸ <b>Alerts are paused for now</b>\n"
+    "Nothing is checked or sent until they are back on. 🔎 /search still finds open sits."
+)
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 

@@ -1,6 +1,6 @@
 """Entry point.
 
-    python -m petalert                        # bot + worker (what systemd runs)
+    python -m petalert                        # bot + worker (what systemd runs); ALERTS=off: /search only
     python -m petalert codes generate 100     # a new pack of invite codes with deep links
     python -m petalert codes list             # unused codes
     python -m petalert rebaseline mmh         # re-index a site quietly, see rebaseline() below
@@ -58,15 +58,21 @@ async def run_bot(settings: Settings) -> None:
     sources = build_sources(http, settings, notice=admin)
     outbox = TelegramOutbox(bot, {key: s.title for key, s in sources.items()}, store)
     worker = Worker(
-        store, sources, outbox, admin, settings.poll_interval, full_every=settings.full_crawl_every
+        store, sources, outbox, admin, settings.poll_interval,
+        full_every=settings.full_crawl_every, alerts=settings.alerts,
     )
 
-    dp = build_dispatcher(store, sources, worker, settings.admin_user_ids, Geocoder(http))
+    dp = build_dispatcher(
+        store, sources, worker, settings.admin_user_ids, Geocoder(http), alerts=settings.alerts
+    )
 
     await bot.set_my_commands(COMMANDS)
     me = await bot.get_me()
-    log.info("bot @%s, polling every %s, proxy: %s", me.username, settings.poll_interval,
-             settings.proxy_mode if settings.proxy_url else "none")
+    log.info(
+        "bot @%s, alerts: %s, proxy: %s", me.username,
+        f"on, polling every {settings.poll_interval}" if settings.alerts else "OFF (ALERTS=off) — /search only",
+        settings.proxy_mode if settings.proxy_url else "none",
+    )
     worker_task = asyncio.create_task(worker.run(), name="worker")
     try:
         await dp.start_polling(bot)

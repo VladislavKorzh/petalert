@@ -273,6 +273,21 @@ def test_first_fetch_crawls_each_length_until_its_open_stays_end():
     assert [l.id for l in listings] == sorted((l.id for l in listings), reverse=True)  # newest first
 
 
+def test_warm_builds_the_index_a_search_then_answers_from():
+    """With alerts off no tick searches, so the worker calls warm() instead."""
+    site = Site([Stay(uid(i), 3) for i in range(5)])
+    fake = Fake(site)
+
+    async def go():
+        await fake.nmd.warm()
+        crawl = fake.kinds()
+        return crawl, await everything(fake), fake.kinds()
+
+    crawl, listings, after = fake.run(go)
+    assert crawl == ["map", "list -7 p1", "list 8-14 p1", "list 15- p1"]
+    assert len(listings) == 5 and after == []
+
+
 def test_between_crawls_the_map_tells_what_is_new_and_what_is_gone():
     site = Site([Stay(uid(i), 3) for i in range(5)])
     fake = Fake(site)
